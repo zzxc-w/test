@@ -249,13 +249,13 @@
     <canvas id="game" width="960" height="540" tabindex="0" aria-label="Game world. Use WASD to move and Space to attack."></canvas>
     <div class="topbar" aria-live="polite">
       <section class="panel vitals">
-        <div class="name-row"><span class="name">Wandering Disciple</span><span class="realm" id="realm">Mortal Â· I</span></div>
+        <div class="name-row"><span class="name">Wandering Disciple</span><span class="realm" id="realm">Mortal &middot; I</span></div>
         <button id="settingsButton" type="button" aria-haspopup="dialog">Menu</button>
         <div class="bar hp"><i id="hpFill"></i><small id="hpText">100 / 100</small></div>
         <div class="bar qi"><i id="qiFill"></i><small id="qiText">0 / 100 qi</small></div>
         <div class="bar xp"><i id="xpFill"></i></div>
       </section>
-      <section class="panel location"><strong id="zone">Bamboo Verge</strong><span id="time">Dawn Â· Day 1</span></section>
+      <section class="panel location"><strong id="zone">Bamboo Verge</strong><span id="time">Dawn &middot; Day 1</span></section>
       <section class="panel resources">
         <div><span>Spirit stones</span><b id="stones">0</b></div>
         <div><span>Herbs</span><b id="herbs">0</b></div>
@@ -264,23 +264,25 @@
       </section>
     </div>
     <aside id="quest" class="panel"><h2>Current insight</h2><p id="questText">Seek a spirit vein and gather qi.</p></aside>
-    <div id="compass" class="panel"><span id="compassArrow">â–²</span><span id="compassText">Spirit vein nearby</span></div>
+    <div id="compass" class="panel"><span id="compassArrow">&#9650;</span><span id="compassText">Spirit vein nearby</span></div>
     <div id="messages" aria-live="polite"></div>
     <div id="interactPrompt" class="panel" aria-live="polite"></div>
-    <div class="panel bottom-help"><kbd>WASD</kbd> Move &nbsp; <kbd>Space</kbd> Sword &nbsp; <kbd>Shift</kbd> Dash &nbsp; <kbd>C</kbd> Cultivate &nbsp; <kbd>E</kbd> Gather &nbsp; <kbd>Q</kbd> Talisman</div>
+    <div class="panel bottom-help"><kbd>WASD</kbd> Move &nbsp; <kbd>Space</kbd> Sword &nbsp; <kbd>F</kbd> Parry &nbsp; <kbd>Shift</kbd> Dash &nbsp; <kbd>C</kbd> Cultivate &nbsp; <kbd>E</kbd> Gather &nbsp; <kbd>Q</kbd> Talisman</div>
     <div id="touch" aria-label="Touch controls">
       <div class="pad">
-        <button class="touch-btn" data-key="w" aria-label="Move up">â–²</button><button class="touch-btn" data-key="a" aria-label="Move left">â—€</button><button class="touch-btn" data-key="s" aria-label="Move down">â–¼</button><button class="touch-btn" data-key="d" aria-label="Move right">â–¶</button>
+        <button class="touch-btn" data-key="w" aria-label="Move up">&#9650;</button><button class="touch-btn" data-key="a" aria-label="Move left">&#9664;</button><button class="touch-btn" data-key="s" aria-label="Move down">&#9660;</button><button class="touch-btn" data-key="d" aria-label="Move right">&#9654;</button>
       </div>
       <div class="actions">
-        <button class="touch-btn" data-key="c">Cultivate</button><button class="touch-btn" data-key="e">Gather</button><button class="touch-btn" data-key="shift">Dash</button><button class="touch-btn" data-key="q">Seal</button><button class="touch-btn" data-key=" ">Strike</button>
+        <button class="touch-btn" data-key="c">Cultivate</button><button class="touch-btn" data-key="e">Gather</button><button class="touch-btn" data-key="shift">Dash</button><button class="touch-btn" data-key="f">Parry</button><button class="touch-btn" data-key="q">Seal</button><button class="touch-btn" data-key=" ">Strike</button>
       </div>
     </div>
     <section id="settingsMenu" class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
       <div class="menu-card">
         <div class="menu-head"><h2 id="settingsTitle">Settings</h2><button id="closeSettings" type="button">Close</button></div>
         <h3>Controls</h3>
-        <p><kbd>WASD</kbd> move, <kbd>Space</kbd> strike, <kbd>Shift</kbd> dash, <kbd>C</kbd> cultivate, <kbd>E</kbd> gather, and <kbd>Q</kbd> cast a sword seal.</p>
+        <p><kbd>WASD</kbd> move, <kbd>Space</kbd> strike, <kbd>F</kbd> parry, <kbd>Shift</kbd> dash, <kbd>C</kbd> cultivate, <kbd>E</kbd> gather, and <kbd>Q</kbd> cast a sword seal.</p>
+        <h3>Breakthrough materials</h3>
+        <pre id="inventoryText" class="dev-status"></pre>
         <div class="danger-zone">
           <h3>Clear progress</h3>
           <p>Deletes only this game's save from this device. This cannot be undone.</p>
@@ -304,16 +306,19 @@
             <button data-dev-action="toggle-invulnerable">Toggle invulnerability</button><button data-dev-action="toggle-cooldowns">Toggle no cooldowns</button>
           </div></section>
           <section class="dev-group"><h3>Progress</h3><div class="menu-actions">
-            <button data-dev-action="quest-prev">Quest -1</button><button data-dev-action="quest-next">Quest +1</button>
-            <button data-dev-action="reconcile">Reconcile objectives</button><button data-dev-action="open-caches">Open all caches</button>
+            <button data-dev-action="reset-tutorial">Reset tutorial</button><button data-dev-action="complete-tutorial">Complete tutorial</button>
+            <button data-dev-action="grant-materials">Grant all materials</button><button data-dev-action="clear-materials">Clear materials</button>
+            <button data-dev-action="open-caches">Open all caches</button>
             <button data-dev-action="reset-caches">Reset caches</button><button data-dev-action="defeat-boss">Defeat boss</button>
-            <button data-dev-action="respawn-boss">Respawn boss</button>
+            <button data-dev-action="respawn-boss">Respawn boss</button><button data-dev-action="trigger-attack">Trigger nearby attack</button>
           </div></section>
           <section class="dev-group wide"><h3>Travel</h3><div class="menu-actions">
             <button data-dev-travel="crossroads">Crossroads</button><button data-dev-travel="vein-nw">NW vein</button>
             <button data-dev-travel="vein-ne">NE vein</button><button data-dev-travel="vein-sw">SW vein</button><button data-dev-travel="vein-se">SE vein</button>
             <button data-dev-travel="grove">Bamboo Grove</button><button data-dev-travel="monastery">Monastery</button>
             <button data-dev-travel="mere">Lotus Mere</button><button data-dev-travel="grave">Sword Grave</button><button data-dev-travel="ruins">Fallen Sect</button>
+            <button data-dev-travel="mistglass">Mistglass Ravine</button><button data-dev-travel="roots">Root Hollow</button>
+            <button data-dev-travel="kiln">Emberglass Kiln</button><button data-dev-travel="starfall">Starfall Crater</button>
           </div></section>
           <section class="dev-group wide"><h3>World and save</h3><div class="menu-actions">
             <button data-dev-action="dawn">Dawn</button><button data-dev-action="noon">Noon</button><button data-dev-action="night">Night</button>
@@ -324,14 +329,14 @@
     </section>
     <section id="overlay">
       <div class="title-card">
-        <div class="sigil">âœ¦</div>
+        <div class="sigil">&#10022;</div>
         <h1>Path of the Verdant Star</h1>
         <p>The sects have fallen silent. Cross the wild valleys, temper your spirit, and forge a path from mortal wanderer to immortal cultivator.</p>
         <button class="primary" id="start">Begin the Journey</button>
-        <div class="controls">Explore freely Â· Fight spirit beasts Â· Gather herbs Â· Cultivate at qi-rich places Â· Your progress saves automatically</div>
+        <div class="controls">Explore freely &middot; Read enemy tells &middot; Gather rare materials &middot; Earn breakthroughs &middot; Your progress saves automatically</div>
       </div>
     </section>
   </main>
-  <script src="game.js?v=6"></script>
+  <script src="game.js?v=7"></script>
 </body>
 </html>
