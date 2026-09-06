@@ -17,7 +17,7 @@
     return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
   };
 
-  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','zone','time','questText','messages','overlay','start','compassArrow','compassText'].map(id => [id, document.getElementById(id)]));
+  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','caches','zone','time','questText','messages','overlay','start','compassArrow','compassText','interactPrompt'].map(id => [id, document.getElementById(id)]));
   const keys = new Set(), taps = new Set();
   let started = false, paused = false, last = performance.now(), playTime = 0, shake = 0, flash = 0, runtimeErrorShown = false;
 
@@ -60,6 +60,8 @@
       if (yy > 2 && xx > 2 && yy < WORLD_H - 3 && xx < WORLD_W - 3 && Math.hypot(xx - a.x, yy - a.y) < a.r) map[yy][xx] = (a.icon === 'lotus' && hash(xx, yy, 18) < .22) ? 'water' : 'grass';
     }
   }
+  // Area carving happens after landmark clearings, so restore the functional landmark tiles.
+  for (const l of landmarks) map[l.y][l.x] = l.type;
 
   const realms = [
     { name: 'Mortal', stages: 3, qi: 80 }, { name: 'Qi Condensation', stages: 5, qi: 150 },
@@ -74,6 +76,7 @@
   };
   let enemies = [], plants = [], particles = [], slashes = [], pickups = [], messages = [], quest = 0;
   let treasures = areas.map((a, i) => ({ x: (a.x + (i % 2 ? 3 : -3)) * TILE, y: (a.y + 2) * TILE, opened: false, area: a.name }));
+  const guaranteedHerbs = [[44,39],[51,39],[43,34],[52,34],[46,43],[49,43],[37,36],[58,36],[21,14],[73,17],[21,57],[74,57]];
   let bossDefeated = false;
 
   const enemyTypes = {
@@ -111,7 +114,8 @@
       const t = enemyTypes[type];
       return { ...p, type, hp: t.hp, maxHp: t.hp, vx: 0, vy: 0, hit: 0, attackCd: hash(i, 2) * 2, wander: hash(i, 3) * TAU, alive: true };
     });
-    plants = Array.from({ length: 46 }, (_, i) => ({ ...randomOpen(300 + i), ready: true, respawn: 0, phase: hash(i, 8) * TAU }));
+    plants = guaranteedHerbs.map(([x,y], i) => ({ x: (x + .5) * TILE, y: (y + .5) * TILE, ready: true, respawn: 0, phase: hash(i, 8) * TAU, guaranteed: true }));
+    plants.push(...Array.from({ length: 52 }, (_, i) => ({ ...randomOpen(300 + i), ready: true, respawn: 0, phase: hash(i, 8) * TAU })));
     const boss = enemyTypes.guardian;
     enemies.push({ x: 78 * TILE, y: 56 * TILE, type: 'guardian', hp: 320, maxHp: 320, vx: 0, vy: 0, hit: 0, attackCd: 1, wander: 0, alive: !bossDefeated, boss: true, respawn: 99999, title: 'Sectbreaker Golem' });
   }
@@ -179,15 +183,14 @@
   }
 
   function cultivate() {
-    const tile = tileUnder();
-    const nearShrine = landmarks.some(l => l.type === 'shrine' && Math.hypot(player.x / TILE - l.x, player.y / TILE - l.y) < 2.5);
-    if (tile !== 'vein' && !nearShrine) { addMessage('The qi here is too thin to cultivate.', 'bad'); return; }
+    const vein = landmarks.find(l => l.type === 'vein' && Math.hypot(player.x / TILE - (l.x + .5), player.y / TILE - (l.y + .5)) < 2.25);
+    if (!vein) { addMessage('Cultivation only works inside a green spirit-vein beacon.', 'bad'); return; }
     player.meditating = true;
     if (player.qi < player.maxQi) {
-      player.qi = Math.min(player.maxQi, player.qi + (tile === 'vein' ? 18 : 9));
+      player.qi = Math.min(player.maxQi, player.qi + 18);
       player.hp = Math.min(player.maxHp, player.hp + 8);
       burst(player.x, player.y, '#77e6ba', 14, 38);
-      addMessage(`You draw ${tile === 'vein' ? 'rich' : 'gentle'} qi into your meridians.`, 'good');
+      addMessage('You draw rich vein qi into your meridians.', 'good');
       if (quest === 0) { quest = 1; addMessage('Insight: qi can strengthen body and blade.', 'good'); }
     }
     if (player.qi >= player.maxQi) breakthrough();
@@ -267,19 +270,19 @@
     if (e.boss) {
       bossDefeated = true; player.stones += 12; player.qi = player.maxQi;
       addMessage('Sectbreaker falls. The ruined inheritance is yours.', 'good'); flash = 1;
-      quest = Math.max(quest, 5); save();
+      quest = Math.max(quest, 6); save();
     }
     if (quest === 1) quest = 2;
   }
 
   function gather() {
-    const chest = treasures.find(t => !t.opened && dist(player, t) < 34);
+    const chest = treasures.find(t => !t.opened && dist(player, t) < 58);
     if (chest) {
-      chest.opened = true; const reward = 3 + Math.floor(hash(t.x, t.y, 55) * 4);
+      chest.opened = true; const reward = 3 + Math.floor(hash(chest.x, chest.y, 55) * 4);
       player.stones += reward; player.qi = Math.min(player.maxQi, player.qi + 20); gainXp(25);
       burst(chest.x, chest.y, '#f0cd72', 22, 95); addMessage(`Opened an ancient cache: ${reward} spirit stones.`, 'good'); save(); return;
     }
-    const plant = plants.find(p => p.ready && dist(player, p) < 28);
+    const plant = plants.find(p => p.ready && dist(player, p) < 42);
     if (plant) {
       plant.ready = false; plant.respawn = 35; player.herbs++;
       burst(plant.x, plant.y, '#82c86b', 9, 45); addMessage('Gathered moonleaf herb.', 'good');
@@ -287,6 +290,21 @@
       return;
     }
     addMessage('No ripe spirit herb is within reach.');
+  }
+
+  function dash(dx, dy) {
+    if (player.dashCd > 0 || player.meditating) return;
+    if (!dx && !dy) { dx = Math.cos(player.facing); dy = Math.sin(player.facing); }
+    const n = Math.hypot(dx, dy) || 1; dx /= n; dy /= n;
+    const fromX = player.x, fromY = player.y;
+    // Step the teleport so cliffs and water still stop the player cleanly.
+    for (let i = 0; i < 12; i++) {
+      const nx = player.x + dx * 7, ny = player.y + dy * 7;
+      if (!passableAt(nx, ny, player.r)) break;
+      player.x = nx; player.y = ny;
+    }
+    player.dashCd = .72; player.invuln = .48;
+    for (let i = 0; i < 10; i++) particles.push({ x: lerp(fromX, player.x, i / 9), y: lerp(fromY, player.y, i / 9), vx: 0, vy: 0, life: .25 + i * .015, max: .4, color: '#baf5dc', size: 5 });
   }
 
   function handleActions() {
@@ -306,12 +324,12 @@
 
     let dx = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
     let dy = (keys.has('s') || keys.has('arrowdown') ? 1 : 0) - (keys.has('w') || keys.has('arrowup') ? 1 : 0);
+    const dashPressed = taps.has('shift') || taps.has('k');
     if (dx || dy) {
       const n = Math.hypot(dx, dy); dx /= n; dy /= n; player.facing = Math.atan2(dy, dx);
-      let speed = player.speed;
-      if ((keys.has('shift') || keys.has('k')) && player.dashCd <= 0) { speed *= 3.2; player.dashCd = .85; player.invuln = .28; burst(player.x, player.y, '#c8e8d3', 7, 35); }
-      moveEntity(player, dx * speed * dt, dy * speed * dt, player.r);
+      if (!dashPressed) moveEntity(player, dx * player.speed * dt, dy * player.speed * dt, player.r);
     }
+    if (dashPressed) dash(dx, dy);
     handleActions();
 
     for (const e of enemies) {
@@ -358,7 +376,8 @@
     ui.qiFill.style.width = `${100 * player.qi / player.maxQi}%`; ui.qiText.textContent = `${Math.floor(player.qi)} / ${player.maxQi} qi`;
     ui.xpFill.style.width = `${100 * player.xp / player.xpNeed}%`;
     ui.realm.textContent = `${realms[player.realm].name} Â· ${roman(player.stage)}`;
-    ui.stones.textContent = player.stones; ui.herbs.textContent = player.herbs; ui.kills.textContent = player.kills; ui.zone.textContent = zoneName();
+    const openedCaches = treasures.filter(t => t.opened).length;
+    ui.stones.textContent = player.stones; ui.herbs.textContent = player.herbs; ui.kills.textContent = player.kills; ui.caches.textContent = `${openedCaches} / ${treasures.length}`; ui.zone.textContent = zoneName();
     const totalMins = (playTime * .42 + 330) % 1440, hour = Math.floor(totalMins / 60), day = 1 + Math.floor((playTime * .42 + 330) / 1440);
     const period = hour < 7 ? 'Dawn' : hour < 12 ? 'Morning' : hour < 17 ? 'Afternoon' : hour < 20 ? 'Dusk' : 'Night';
     ui.time.textContent = `${period} Â· Day ${day}`;
@@ -367,18 +386,29 @@
     const veinAngle = Math.atan2(nearest.y * TILE - player.y, nearest.x * TILE - player.x);
     const veinDistance = Math.round(Math.hypot(nearest.x * TILE - player.x, nearest.y * TILE - player.y) / TILE);
     ui.compassArrow.style.transform = `rotate(${veinAngle + Math.PI / 2}rad)`;
-    ui.compassText.textContent = tileUnder() === 'vein' ? 'You are standing in a spirit vein â€” press C' : `Nearest spirit vein Â· ${veinDistance} steps`;
+    const nearVein = Math.hypot(player.x / TILE - (nearest.x + .5), player.y / TILE - (nearest.y + .5)) < 2.25;
+    ui.compassText.textContent = nearVein ? 'Inside a spirit vein â€” press C to cultivate' : `Nearest spirit vein Â· ${veinDistance} steps`;
     const q = [
       'Follow the <em>spirit compass</em> to a green beacon, then press <em>C</em>.',
       'Hunt a spirit beast. Strike with <em>Space</em>.',
       'Gather <em>3 moonleaf herbs</em> and survive the wilds.',
       `Fill your qi to break through. <em>${Math.floor(player.qi)} / ${player.maxQi}</em>`,
-      'Explore the five named regions and open their ancient caches with <em>E</em>.',
-      'The fallen sect is reclaimed. Seek every cache and cultivate further.'
+      `Ancient caches are gold-lidded chests in each named region. Approach and press <em>E</em>. <em>${openedCaches} / ${treasures.length}</em> opened.`,
+      'Travel southeast to the <em>Ruins of the Fallen Sect</em> and defeat the Sectbreaker Golem.',
+      'The fallen sect is reclaimed. Seek every secret and cultivate further.'
     ];
     if (quest === 2 && player.herbs >= 3) quest = 3;
     if (quest === 3 && player.realm > 0) quest = 4;
-    ui.questText.innerHTML = q[quest] || q[5];
+    if (quest === 4 && openedCaches >= treasures.length) quest = 5;
+    ui.questText.innerHTML = q[quest] || q[6];
+    const nearbyChest = treasures.find(t => !t.opened && dist(player, t) < 58);
+    const nearbyHerb = plants.find(p => p.ready && dist(player, p) < 42);
+    let prompt = '';
+    if (nearbyChest) prompt = 'E Â· Open ancient cache';
+    else if (nearbyHerb) prompt = 'E Â· Gather glowing moonleaf';
+    else if (nearVein) prompt = 'C Â· Cultivate in the spirit vein';
+    ui.interactPrompt.textContent = prompt;
+    ui.interactPrompt.classList.toggle('show', !!prompt);
   }
 
   function roman(n) { return ['I','II','III','IV','V'][n - 1] || String(n); }
@@ -413,9 +443,10 @@
 
   function drawPlant(p, cam, time) {
     if (!p.ready) return; const s = screenPos(p.x, p.y, cam), bob = Math.sin(time * 2 + p.phase);
+    ctx.globalAlpha = .22 + Math.sin(time * 3 + p.phase) * .06; ctx.fillStyle = '#a9ff8b'; ctx.fillRect(s.x - 10, s.y - 11 + bob, 20, 20); ctx.globalAlpha = 1;
     ctx.fillStyle = '#173326'; ctx.fillRect(s.x - 5, s.y + 3, 11, 4);
-    ctx.fillStyle = '#75bd67'; ctx.fillRect(s.x - 1, s.y - 6 + bob, 3, 10); ctx.fillRect(s.x - 6, s.y - 4 + bob, 6, 3); ctx.fillRect(s.x + 1, s.y - 1 + bob, 6, 3);
-    ctx.fillStyle = '#d6ec9e'; ctx.fillRect(s.x, s.y - 7 + bob, 2, 2);
+    ctx.fillStyle = '#80d66c'; ctx.fillRect(s.x - 2, s.y - 9 + bob, 4, 13); ctx.fillRect(s.x - 8, s.y - 6 + bob, 8, 4); ctx.fillRect(s.x + 1, s.y - 2 + bob, 8, 4);
+    ctx.fillStyle = '#efffb4'; ctx.fillRect(s.x - 1, s.y - 11 + bob, 4, 4);
   }
 
   function drawLandmarks(cam, time) {
@@ -448,7 +479,8 @@
     }
     for (const t of treasures) {
       if (t.opened) continue; const s = screenPos(t.x,t.y,cam);
-      ctx.fillStyle = '#1b1610'; ctx.fillRect(s.x - 10,s.y - 5,20,13); ctx.fillStyle = '#a77a34'; ctx.fillRect(s.x - 9,s.y - 8,18,6); ctx.fillStyle = '#efd372'; ctx.fillRect(s.x - 2,s.y - 4,4,6);
+      ctx.globalAlpha = .2 + Math.sin(time * 4 + t.x) * .06; ctx.fillStyle = '#ffd66d'; ctx.fillRect(s.x - 16,s.y - 14,32,27); ctx.globalAlpha = 1;
+      ctx.fillStyle = '#1b1610'; ctx.fillRect(s.x - 13,s.y - 6,26,16); ctx.fillStyle = '#bd8738'; ctx.fillRect(s.x - 12,s.y - 11,24,8); ctx.fillStyle = '#ffe18a'; ctx.fillRect(s.x - 3,s.y - 5,6,8);
     }
   }
 
