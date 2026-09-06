@@ -110,6 +110,18 @@
       flex-direction: column-reverse;
       gap: 4px;
     }
+    #interactPrompt {
+      position: absolute;
+      left: 50%;
+      bottom: 52px;
+      transform: translateX(-50%);
+      display: none;
+      padding: 7px 11px;
+      color: #fff0bd;
+      pointer-events: none;
+      font: .8rem/1.2 system-ui, sans-serif;
+    }
+    #interactPrompt.show { display: block; }
     .msg { width: fit-content; max-width: 100%; padding: 4px 8px; background: #080c13c7; border-left: 2px solid #8a7650; color: #d8d4c8; font-size: .79rem; text-shadow: 1px 1px #000; }
     .msg.good { border-color: var(--jade); color: #aaf0d0; }
     .msg.bad { border-color: var(--danger); color: #f4aaa4; }
@@ -176,18 +188,20 @@
         <div><span>Spirit stones</span><b id="stones">0</b></div>
         <div><span>Herbs</span><b id="herbs">0</b></div>
         <div><span>Beasts felled</span><b id="kills">0</b></div>
+        <div><span>Ancient caches</span><b id="caches">0 / 5</b></div>
       </section>
     </div>
     <aside id="quest" class="panel"><h2>Current insight</h2><p id="questText">Seek a spirit vein and gather qi.</p></aside>
     <div id="compass" class="panel"><span id="compassArrow">â–²</span><span id="compassText">Spirit vein nearby</span></div>
     <div id="messages" aria-live="polite"></div>
+    <div id="interactPrompt" class="panel" aria-live="polite"></div>
     <div class="panel bottom-help"><kbd>WASD</kbd> Move &nbsp; <kbd>Space</kbd> Sword &nbsp; <kbd>Shift</kbd> Dash &nbsp; <kbd>C</kbd> Cultivate &nbsp; <kbd>E</kbd> Gather &nbsp; <kbd>Q</kbd> Talisman</div>
     <div id="touch" aria-label="Touch controls">
       <div class="pad">
         <button class="touch-btn" data-key="w" aria-label="Move up">â–²</button><button class="touch-btn" data-key="a" aria-label="Move left">â—€</button><button class="touch-btn" data-key="s" aria-label="Move down">â–¼</button><button class="touch-btn" data-key="d" aria-label="Move right">â–¶</button>
       </div>
       <div class="actions">
-        <button class="touch-btn" data-key="c">Cultivate</button><button class="touch-btn" data-key="e">Gather</button><button class="touch-btn" data-key="q">Seal</button><button class="touch-btn" data-key=" ">Strike</button>
+        <button class="touch-btn" data-key="c">Cultivate</button><button class="touch-btn" data-key="e">Gather</button><button class="touch-btn" data-key="shift">Dash</button><button class="touch-btn" data-key="q">Seal</button><button class="touch-btn" data-key=" ">Strike</button>
       </div>
     </div>
     <section id="overlay">
@@ -200,7 +214,7 @@
       </div>
     </section>
   </main>
-  <script src="game.js?v=2"></script>
+  <script src="game.js?v=3"></script>
 </body>
 </html>
 
