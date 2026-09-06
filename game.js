@@ -19,7 +19,7 @@
 
   const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','zone','time','questText','messages','overlay','start','compassArrow','compassText'].map(id => [id, document.getElementById(id)]));
   const keys = new Set(), taps = new Set();
-  let started = false, paused = false, last = performance.now(), playTime = 0, shake = 0, flash = 0;
+  let started = false, paused = false, last = performance.now(), playTime = 0, shake = 0, flash = 0, runtimeErrorShown = false;
 
   const colors = {
     grass: ['#314f38', '#35563d'], forest: ['#223d31', '#274636'], water: ['#183b49', '#1c4653'],
@@ -133,6 +133,7 @@
   function save() {
     try {
       localStorage.setItem('verdant-star-save', JSON.stringify({
+        version: 2,
         x: player.x, y: player.y, hp: player.hp, qi: player.qi, maxQi: player.maxQi, maxHp: player.maxHp,
         xp: player.xp, xpNeed: player.xpNeed, realm: player.realm, stage: player.stage, stones: player.stones,
         herbs: player.herbs, kills: player.kills, attack: player.attack, quest, playTime,
@@ -151,6 +152,9 @@
       if (Array.isArray(d.discoveries)) player.discoveries = new Set(d.discoveries);
       if (Array.isArray(d.treasures)) d.treasures.forEach((opened, i) => { if (treasures[i]) treasures[i].opened = !!opened; });
       bossDefeated = !!d.bossDefeated;
+      // Old or partially-written saves must never create an unbounded level-up loop.
+      player.xpNeed = clamp(Math.floor(player.xpNeed) || 60, 20, 1000000);
+      player.xp = clamp(Math.floor(player.xp) || 0, 0, player.xpNeed * 10);
     } catch (_) {}
   }
 
@@ -207,13 +211,18 @@
   }
 
   function gainXp(n) {
-    player.xp += n;
-    while (player.xp >= player.xpNeed) {
+    if (!Number.isFinite(player.xpNeed) || player.xpNeed < 1) player.xpNeed = 60;
+    if (!Number.isFinite(player.xp) || player.xp < 0) player.xp = 0;
+    player.xp += Number.isFinite(n) ? Math.max(0, n) : 0;
+    // The cap is a final safeguard against malformed legacy saves freezing a frame.
+    let levels = 0;
+    while (player.xp >= player.xpNeed && levels++ < 20) {
       player.xp -= player.xpNeed;
-      player.xpNeed = Math.floor(player.xpNeed * 1.35);
+      player.xpNeed = Math.max(20, Math.floor(player.xpNeed * 1.35));
       player.attack += 2; player.maxHp += 5; player.hp = Math.min(player.maxHp, player.hp + 15);
       addMessage('Martial insight deepens your technique.', 'good');
     }
+    if (levels >= 20) { player.xp = 0; player.xpNeed = Math.max(60, player.xpNeed); }
   }
 
   function attack() {
@@ -508,7 +517,15 @@
   }
 
   function frame(now) {
-    const dt = Math.min(.05, (now - last) / 1000); last = now; update(dt); draw(now); requestAnimationFrame(frame);
+    const dt = Math.min(.05, (now - last) / 1000); last = now;
+    try {
+      update(dt); draw(now); runtimeErrorShown = false;
+    } catch (error) {
+      console.error('Recovered game-loop error:', error);
+      keys.clear(); taps.clear(); player.meditating = false;
+      if (!runtimeErrorShown) { runtimeErrorShown = true; addMessage('A wandering qi deviation was corrected. You can keep playing.', 'bad'); }
+    }
+    requestAnimationFrame(frame);
   }
 
   addEventListener('keydown', e => {
