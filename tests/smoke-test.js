@@ -8,17 +8,19 @@ const original = fs.readFileSync(sourcePath, 'utf8');
 const html = fs.readFileSync(htmlPath, 'utf8');
 const htmlIds = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
 assert.strictEqual(new Set(htmlIds).size, htmlIds.length, 'HTML IDs must be unique');
-for (const id of ['settingsButton','settingsMenu','closeSettings','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus']) {
+for (const id of ['settingsButton','settingsMenu','closeSettings','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText']) {
   assert(htmlIds.includes(id), `missing UI element #${id}`);
 }
+assert(/data-key="f"[^>]*>Parry</.test(html), 'touch controls must include Parry');
 const needle = '  updateUI(); requestAnimationFrame(frame);\n})();';
 assert(original.includes(needle), 'test hook insertion point changed');
 const source = original.replace(needle, `  updateUI();
   globalThis.__test = {
-    player, treasures, enemies, map, dash, dashCooldownDuration, reconcileQuestProgress,
-    passableAt, runDevAction, safeTeleport, save,
+    player, treasures, enemies, map, areas, landmarks, resourceNodes, dash, dashCooldownDuration, reconcileQuestProgress,
+    passableAt, runDevAction, safeTeleport, save, bossDefs, bossStates, tutorial, itemDefs,
+    currentBreakthroughRequirement, missingRequirements, breakthrough, enemyProfile,
+    startEnemyAttack, resolveEnemyAttack, updateEnemyCombat, parry, attack, useTalisman, cultivate, killEnemy, draw, updateUI,
     get quest() { return quest; }, set quest(value) { quest = value; },
-    get bossDefeated() { return bossDefeated; }, set bossDefeated(value) { bossDefeated = value; },
     get suppressSave() { return suppressSave; }
   };
   requestAnimationFrame(frame);
@@ -39,6 +41,16 @@ class FakeElement {
   hasPointerCapture(id) { return this.captured.has(id); }
   querySelector() { return null; }
   closest() { return null; }
+}
+
+{
+  const { t } = boot();
+  assert.strictEqual(t.map.length, 108); assert.strictEqual(t.map[0].length, 144, 'expanded map dimensions must remain stable');
+  assert.strictEqual(t.areas.length, 9); assert.strictEqual(t.treasures.length, 9, 'new regions should append stable caches');
+  for (const item of ['cloud_dew','lotus_seed','root_resin','cinder_marrow']) assert(t.resourceNodes.some(node => node.item === item), `missing resource nodes for ${item}`);
+  for (const cache of t.treasures) assert(t.passableAt(cache.x, cache.y, 7), `${cache.id} must remain reachable`);
+  for (const enemy of t.enemies.filter(enemy => enemy.boss)) assert(t.passableAt(enemy.x, enemy.y, enemy.r), `${enemy.title} must spawn on passable terrain`);
+  t.updateUI(); t.draw(1000);
 }
 
 function boot(saved) {
@@ -100,21 +112,122 @@ function boot(saved) {
     found = true;
   }
   assert(found, 'procedural map should provide a terrain-phasing test case');
-  t.player.x = 96 * 24 - t.player.r - 2; t.player.y = 36 * 24; t.player.dashCd = 0; t.dash(1, 0);
-  assert(t.player.x <= 96 * 24 - t.player.r, 'dash must stay inside world bounds');
+  t.player.x = 144 * 24 - t.player.r - 2; t.player.y = 36 * 24; t.player.dashCd = 0; t.dash(1, 0);
+  assert(t.player.x <= 144 * 24 - t.player.r, 'dash must stay inside world bounds');
 }
 
 {
   const allCaches = [true, true, true, true, true];
-  const repaired = boot({ version: 3, quest: 5, bossDefeated: true, treasures: allCaches });
-  assert.strictEqual(repaired.t.quest, 6, 'already-defeated boss save should repair the final objective');
-  assert.strictEqual(JSON.parse(repaired.storage.get('verdant-star-save')).version, 4, 'legacy save should migrate to v4');
+  const migrated = boot({ version: 4, quest: 5, bossDefeated: true, treasures: allCaches });
+  assert.strictEqual(migrated.t.bossStates.sectbreaker, true, 'legacy boss victory must migrate');
+  assert(migrated.t.player.keyItems.has('sectbreaker_core'), 'legacy boss victory must grant its breakthrough key');
+  assert(migrated.t.tutorial.attacked && migrated.t.tutorial.cultivated, 'legacy progress should complete the tutorial');
+  assert.strictEqual(migrated.elements.get('quest').hidden, true, 'completed tutorial should hide guided objectives');
+  assert.strictEqual(JSON.parse(migrated.storage.get('verdant-star-save')).version, 5, 'legacy save should migrate to v5');
+  assert.strictEqual(migrated.t.treasures.slice(0, 5).filter(cache => cache.opened).length, 5, 'old cache indices must remain intact');
 
-  const gated = boot({ version: 3, quest: 4, bossDefeated: true, treasures: [true, false, false, false, false] });
-  assert.strictEqual(gated.t.quest, 4, 'boss defeat must not skip cache requirements');
-  gated.t.treasures.forEach(cache => { cache.opened = true; });
-  assert(gated.t.reconcileQuestProgress());
-  assert.strictEqual(gated.t.quest, 6, 'finishing caches should recognize an earlier boss defeat');
+  const allBosses = Object.fromEntries(migrated.t.bossDefs.map(boss => [boss.id, true]));
+  const repaired = boot({ version: 5, bosses: allBosses, keyItems: [] });
+  for (const boss of repaired.t.bossDefs) assert(repaired.t.player.keyItems.has(boss.keyItem), `${boss.id} defeat must restore ${boss.keyItem}`);
+  repaired.t.runDevAction('clear-materials');
+  for (const boss of repaired.t.bossDefs) assert(repaired.t.player.keyItems.has(boss.keyItem), 'clearing consumables must preserve earned boss keys');
+}
+
+{
+  const first = boot();
+  const node = first.t.resourceNodes[0]; node.ready = false; node.respawn = 55; first.t.save();
+  const saved = JSON.parse(first.storage.get('verdant-star-save'));
+  assert(saved.resourceReadyAt[node.id] > Date.now(), 'harvest cooldown must be persisted');
+  const reloaded = boot(saved), sameNode = reloaded.t.resourceNodes.find(candidate => candidate.id === node.id);
+  assert(sameNode && !sameNode.ready && sameNode.respawn > 0, 'reloading must not instantly respawn a harvested ingredient');
+}
+
+{
+  const { t } = boot();
+  t.player.qi = t.player.maxQi;
+  const qiBefore = t.player.qi;
+  assert.strictEqual(t.breakthrough(), false, 'missing materials must block breakthrough');
+  assert.strictEqual(t.player.stage, 1); assert.strictEqual(t.player.qi, qiBefore, 'failed breakthrough must retain full qi');
+  t.player.herbs = 2;
+  assert.strictEqual(t.breakthrough(), true, 'complete requirements should allow breakthrough');
+  assert.strictEqual(t.player.stage, 2); assert.strictEqual(t.player.herbs, 0); assert.strictEqual(t.player.qi, 0);
+
+  t.player.realm = 0; t.player.stage = 3; t.player.qi = t.player.maxQi; t.player.stones = 5;
+  assert.strictEqual(t.breakthrough(), false, 'realm breakthrough must require its boss key');
+  t.player.keyItems.add('verdant_antler');
+  assert.strictEqual(t.breakthrough(), true); assert.strictEqual(t.player.realm, 1); assert(t.player.keyItems.has('verdant_antler'), 'boss keys must not be consumed');
+}
+
+{
+  const { t } = boot();
+  t.parry();
+  assert.strictEqual(t.player.parryTimer, .2);
+  assert.strictEqual(t.player.parryRecovery, .38, 'failed parries need recovery after their active window');
+  const enemy = t.enemies.find(e => !e.boss), profile = t.enemyProfile(t.enemies.find(e => !e.boss));
+  enemy.x = t.player.x + 10; enemy.y = t.player.y; enemy.attackAngle = Math.PI; enemy.attackLanded = false;
+  t.player.parryTimer = .2; const hp = t.player.hp;
+  t.resolveEnemyAttack(enemy, profile);
+  assert.strictEqual(t.player.hp, hp, 'timed parry should prevent damage');
+  assert(enemy.stagger > 0 && enemy.riposteWindow > 0, 'parry should stagger and open a riposte');
+  enemy.attackLanded = false; t.player.parryTimer = 0; t.player.invuln = 0;
+  t.resolveEnemyAttack(enemy, profile); const damagedHp = t.player.hp;
+  t.resolveEnemyAttack(enemy, profile);
+  assert.strictEqual(t.player.hp, damagedHp, 'one active attack must not hit twice');
+
+  const boss = t.enemies.find(e => e.bossId === 'sectbreaker'), bossProfile = t.enemyProfile(boss);
+  boss.x = t.player.x + 10; boss.y = t.player.y; boss.attackAngle = Math.PI; boss.attackLanded = false;
+  t.player.maxHp = 200; t.player.hp = 200; t.player.invuln = 0; t.player.parryTimer = .2;
+  t.resolveEnemyAttack(boss, bossProfile);
+  assert.strictEqual(t.player.hp, 95, 'unparryable boss slam should punish parry attempts');
+}
+
+{
+  const { t } = boot();
+  const enemy = t.enemies.find(e => !e.boss && ['lunge','thrust'].includes(t.enemyProfile(e).kind));
+  const profile = t.enemyProfile(enemy);
+  enemy.attackState = 'active'; enemy.attackTimer = .14; enemy.attackAngle = 0; enemy.attackLanded = false;
+  enemy.x = t.player.x - profile.range - t.player.r - 12; enemy.y = t.player.y;
+  t.player.invuln = 0; const hp = t.player.hp;
+  t.updateEnemyCombat(enemy, profile, .04);
+  assert.strictEqual(t.player.hp, hp, 'a lunge outside its hitbox must keep checking later frames');
+  t.updateEnemyCombat(enemy, profile, .08);
+  assert(t.player.hp < hp, 'a moving lunge should connect when a later active frame reaches the player');
+}
+
+{
+  const { t } = boot();
+  const boss = t.enemies.find(e => e.bossId === 'jadehorn');
+  t.player.attack = 0; boss.hp = 100000; t.player.facing = 0;
+  for (let i = 0; i < 80; i++) {
+    t.player.x = boss.x - 18; t.player.y = boss.y; t.player.attackCd = 0; t.attack();
+    t.player.qi = 20; t.player.talismanCd = 0; t.useTalisman();
+    assert(t.passableAt(boss.x, boss.y, boss.r), 'boss knockback must never move a key-dropping boss into blocked terrain');
+  }
+}
+
+{
+  const { t } = boot();
+  const enemy = t.enemies.find(e => !e.boss), profile = t.enemyProfile(enemy);
+  enemy.x = t.player.x + 10; enemy.y = t.player.y; t.player.hp = t.player.maxHp;
+  t.startEnemyAttack(enemy, profile);
+  t.updateEnemyCombat(enemy, profile, profile.windup / 2);
+  assert.strictEqual(t.player.hp, t.player.maxHp, 'windup must telegraph without early damage');
+  t.updateEnemyCombat(enemy, profile, profile.windup);
+  assert.strictEqual(t.player.hp, t.player.maxHp, 'windup transition must not skip directly to damage');
+  t.updateEnemyCombat(enemy, profile, .05);
+  assert(t.player.hp < t.player.maxHp, 'active attack should deal damage once');
+
+  const boss = t.enemies.find(e => e.bossId === 'jadehorn');
+  t.killEnemy(boss);
+  assert(t.bossStates.jadehorn && t.player.keyItems.has('verdant_antler'), 'boss victory must persist its unique key');
+}
+
+{
+  const { t } = boot();
+  t.attack(); assert(t.tutorial.attacked, 'first sword swing should complete the combat lesson');
+  const vein = t.landmarks.find(landmark => landmark.type === 'vein');
+  t.player.x = (vein.x + .5) * 24; t.player.y = (vein.y + .5) * 24; t.cultivate();
+  assert(t.tutorial.cultivated, 'drawing qi at a vein should complete the cultivation lesson');
 }
 
 {
