@@ -28,13 +28,15 @@ class FakeElement {
   constructor(id) {
     this.id = id; this.hidden = ['settingsMenu', 'devMenu', 'clearConfirm'].includes(id);
     this.style = {}; this.dataset = {}; this.listeners = {}; this.textContent = ''; this.innerHTML = '';
-    this.classList = { toggle() {} };
+    const classes = new Set(); this.captured = new Set();
+    this.classList = { toggle(name, force) { if (force === false) classes.delete(name); else if (force === true || !classes.has(name)) classes.add(name); else classes.delete(name); }, add: name => classes.add(name), remove: name => classes.delete(name), contains: name => classes.has(name) };
   }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
   dispatch(type, event = {}) { for (const fn of this.listeners[type] || []) fn({ target: this, preventDefault() {}, stopPropagation() {}, ...event }); }
   focus() {}
-  setPointerCapture() {}
-  releasePointerCapture() {}
+  setPointerCapture(id) { this.captured.add(id); }
+  releasePointerCapture(id) { this.captured.delete(id); }
+  hasPointerCapture(id) { return this.captured.has(id); }
   querySelector() { return null; }
   closest() { return null; }
 }
@@ -47,13 +49,16 @@ function boot(saved) {
   const gradient = { addColorStop() {} };
   canvas.getContext = () => new Proxy({ createLinearGradient: () => gradient, createRadialGradient: () => gradient }, { get: (o, k) => k in o ? o[k] : () => {} });
   const globalListeners = {};
+  const documentListeners = {};
+  const touchButtons = [new FakeElement('touch-w'), new FakeElement('touch-d'), new FakeElement('touch-d-2')];
+  touchButtons[0].dataset.key = 'w'; touchButtons[1].dataset.key = 'd'; touchButtons[2].dataset.key = 'd';
   const storage = new Map();
   if (saved) storage.set('verdant-star-save', JSON.stringify(saved));
   let reloads = 0;
   const sandbox = {
     console, Math, JSON, Set, Map,
     performance: { now: () => 0 },
-    document: { querySelector: selector => selector === '#game' ? canvas : get(selector.replace('#', '')), getElementById: get, querySelectorAll: () => [] },
+    document: { hidden: false, querySelector: selector => selector === '#game' ? canvas : get(selector.replace('#', '')), getElementById: get, querySelectorAll: selector => selector === '[data-key]' ? touchButtons : [], addEventListener(type, fn) { (documentListeners[type] ||= []).push(fn); } },
     addEventListener(type, fn) { (globalListeners[type] ||= []).push(fn); },
     requestAnimationFrame() {},
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
@@ -61,7 +66,7 @@ function boot(saved) {
   };
   sandbox.globalThis = sandbox;
   vm.runInNewContext(source, sandbox, { filename: sourcePath });
-  return { t: sandbox.__test, elements, storage, globalListeners, get reloads() { return reloads; } };
+  return { t: sandbox.__test, elements, storage, globalListeners, documentListeners, touchButtons, document: sandbox.document, get reloads() { return reloads; } };
 }
 
 {
@@ -123,6 +128,22 @@ function boot(saved) {
   for (const fn of app.globalListeners.beforeunload || []) fn({});
   assert.strictEqual(app.storage.has('verdant-star-save'), false, 'unload must not recreate a cleared save');
   assert.strictEqual(app.reloads, 1);
+}
+
+{
+  const app = boot();
+  const [up, right, right2] = app.touchButtons;
+  up.dispatch('pointerdown', { pointerId: 10 });
+  right.dispatch('pointerdown', { pointerId: 11 });
+  assert(up.classList.contains('is-pressed') && right.classList.contains('is-pressed'), 'multitouch buttons should show pressed state');
+  up.dispatch('lostpointercapture', { pointerId: 10 });
+  assert(!up.classList.contains('is-pressed') && right.classList.contains('is-pressed'), 'lost capture should release only its pointer');
+  right2.dispatch('pointerdown', { pointerId: 12 });
+  right.dispatch('pointercancel', { pointerId: 11 });
+  assert(right2.classList.contains('is-pressed'), 'same-key second pointer should remain held');
+  app.document.hidden = true;
+  for (const fn of app.documentListeners.visibilitychange) fn({});
+  assert(!right2.classList.contains('is-pressed'), 'hiding the page should release all touch state');
 }
 
 console.log('Game smoke tests passed.');

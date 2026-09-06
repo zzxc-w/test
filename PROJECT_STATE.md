@@ -8,7 +8,7 @@ _Last updated: 2026-09-06. Treat this as a continuity summary, not a substitute 
 
 The project is a dependency-free static site:
 
-- `index.html` contains the page structure, CSS, HUD, start overlay, settings/dev dialogs, responsive touch controls, and a fixed 960x540 canvas. It loads `game.js?v=5`.
+- `index.html` contains the page structure, CSS, HUD, start overlay, settings/dev dialogs, responsive touch controls, and a fixed 960x540 canvas. It loads `game.js?v=6`.
 - `game.js` is a single IIFE containing game data, deterministic world generation, input, update/render loops, combat, exploration, progression, quests, and save/load logic.
 - Graphics are drawn procedurally with Canvas 2D; smoothing is disabled for a pixel-art look.
 - There is no framework, package manager, build step, backend, account system, or asset pipeline.
@@ -54,6 +54,7 @@ The project is a dependency-free static site:
 - Made dash cooldown improve per cultivation stage to a nonzero 0.36-second floor and allowed it to cross obstacles while requiring a passable, in-bounds destination.
 - Added save-state sanitization and forward-only quest reconciliation, including repair for saves where the boss was defeated before the cache objective completed.
 - Added settings, safe clear-progress handling, and a hidden testing menu for stats, progression, travel, time, boss/cache state, cooldowns, and saving.
+- Hardened iPad Safari controls with selection/callout suppression, explicit pressed-state styling, multitouch reference counting, and cleanup after cancelled/lost pointers, app switching, page hiding, and menu changes.
 
 ## Current state and known issues
 

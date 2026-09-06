@@ -24,7 +24,7 @@
   };
 
   const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','caches','zone','time','questText','messages','overlay','start','compassArrow','compassText','interactPrompt','settingsButton','settingsMenu','closeSettings','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus'].map(id => [id, document.getElementById(id)]));
-  const keys = new Set(), taps = new Set();
+  const keys = new Set(), taps = new Set(), keyboardKeys = new Set(), touchPointers = new Map(), touchKeyCounts = new Map();
   let started = false, paused = false, last = performance.now(), playTime = 0, shake = 0, flash = 0, runtimeErrorShown = false;
   let activeMenu = null, menuWasPaused = false, suppressSave = false, loadedSaveVersion = 0;
   const dev = { invulnerable: false, noCooldowns: false };
@@ -616,7 +616,7 @@
     if (activeMenu === name) return;
     if (activeMenu) closeMenu();
     menuWasPaused = paused; paused = true; activeMenu = name;
-    keys.clear(); taps.clear();
+    releaseAllInputs();
     const menu = name === 'settings' ? ui.settingsMenu : ui.devMenu;
     menu.hidden = false;
     if (name === 'dev') updateDevStatus();
@@ -629,7 +629,7 @@
     const menu = activeMenu === 'settings' ? ui.settingsMenu : ui.devMenu;
     menu.hidden = true; activeMenu = null; paused = menuWasPaused;
     ui.clearConfirm.hidden = true;
-    keys.clear(); taps.clear(); canvas.focus();
+    releaseAllInputs(); canvas.focus();
   }
 
   function safeTeleport(tx, ty) {
@@ -705,7 +705,7 @@
       update(dt); draw(now); runtimeErrorShown = false;
     } catch (error) {
       console.error('Recovered game-loop error:', error);
-      keys.clear(); taps.clear(); player.meditating = false;
+      releaseAllInputs(); player.meditating = false;
       if (!runtimeErrorShown) { runtimeErrorShown = true; addMessage('A wandering qi deviation was corrected. You can keep playing.', 'bad'); }
     }
     requestAnimationFrame(frame);
@@ -723,17 +723,57 @@
     }
     const k = e.key.toLowerCase();
     if ([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(k)) e.preventDefault();
-    if (!keys.has(k)) taps.add(k); keys.add(k);
+    if (!keys.has(k)) taps.add(k); keyboardKeys.add(k); keys.add(k);
     if (k === 'escape' && started) { paused = !paused; addMessage(paused ? 'The world waits.' : 'The journey continues.'); }
   });
-  addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
-  addEventListener('blur', () => { keys.clear(); taps.clear(); });
+  addEventListener('keyup', e => {
+    const k = e.key.toLowerCase(); keyboardKeys.delete(k);
+    if (!touchKeyCounts.has(k)) keys.delete(k);
+  });
+  function releaseTouchPointer(pointerId) {
+    const entry = touchPointers.get(pointerId);
+    if (!entry) return;
+    touchPointers.delete(pointerId);
+    const nextCount = (touchKeyCounts.get(entry.key) || 1) - 1;
+    if (nextCount > 0) touchKeyCounts.set(entry.key, nextCount); else touchKeyCounts.delete(entry.key);
+    if (![...touchPointers.values()].some(active => active.button === entry.button)) entry.button.classList.remove('is-pressed');
+    if (!touchKeyCounts.has(entry.key) && !keyboardKeys.has(entry.key)) keys.delete(entry.key);
+    try { entry.button.releasePointerCapture(pointerId); } catch (_) {}
+  }
+  function releaseAllInputs() {
+    for (const [pointerId, entry] of touchPointers) {
+      entry.button.classList.remove('is-pressed');
+      try { entry.button.releasePointerCapture(pointerId); } catch (_) {}
+    }
+    touchPointers.clear(); touchKeyCounts.clear(); keyboardKeys.clear(); keys.clear(); taps.clear();
+  }
+
+  addEventListener('blur', releaseAllInputs);
+  addEventListener('pointerup', e => releaseTouchPointer(e.pointerId), true);
+  addEventListener('pointercancel', e => releaseTouchPointer(e.pointerId), true);
+  addEventListener('pagehide', releaseAllInputs);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAllInputs(); });
   document.querySelectorAll('[data-key]').forEach(btn => {
     const k = btn.dataset.key;
-    btn.addEventListener('pointerdown', e => { e.preventDefault(); if (!keys.has(k)) taps.add(k); keys.add(k); btn.setPointerCapture(e.pointerId); });
-    btn.addEventListener('pointerup', e => { keys.delete(k); try { btn.releasePointerCapture(e.pointerId); } catch (_) {} });
-    btn.addEventListener('pointercancel', () => keys.delete(k));
+    btn.addEventListener('pointerdown', e => {
+      e.preventDefault(); releaseTouchPointer(e.pointerId);
+      if (!keys.has(k)) taps.add(k);
+      touchPointers.set(e.pointerId, { key: k, button: btn });
+      touchKeyCounts.set(k, (touchKeyCounts.get(k) || 0) + 1);
+      keys.add(k); btn.classList.add('is-pressed');
+      try { btn.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+    const release = e => { e.preventDefault(); releaseTouchPointer(e.pointerId); };
+    btn.addEventListener('pointerup', release);
+    btn.addEventListener('pointercancel', release);
+    btn.addEventListener('lostpointercapture', release);
+    btn.addEventListener('pointerleave', e => { if (!btn.hasPointerCapture?.(e.pointerId)) release(e); });
   });
+  ui.settingsMenu.addEventListener('contextmenu', e => e.preventDefault());
+  ui.devMenu.addEventListener('contextmenu', e => e.preventDefault());
+  document.getElementById('touch').addEventListener('contextmenu', e => e.preventDefault());
+  document.getElementById('touch').addEventListener('selectstart', e => e.preventDefault());
+  document.getElementById('touch').addEventListener('dragstart', e => e.preventDefault());
   ui.settingsButton.addEventListener('click', () => openMenu('settings'));
   ui.closeSettings.addEventListener('click', closeMenu);
   ui.closeDev.addEventListener('click', closeMenu);
@@ -763,4 +803,3 @@
   if (hadSave && (loadedSaveVersion < SAVE_VERSION || questRepaired)) save();
   updateUI(); requestAnimationFrame(frame);
 })();
-
