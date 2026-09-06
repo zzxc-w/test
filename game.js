@@ -17,7 +17,7 @@
     return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
   };
 
-  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','zone','time','questText','messages','overlay','start'].map(id => [id, document.getElementById(id)]));
+  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','zone','time','questText','messages','overlay','start','compassArrow','compassText'].map(id => [id, document.getElementById(id)]));
   const keys = new Set(), taps = new Set();
   let started = false, paused = false, last = performance.now(), playTime = 0, shake = 0, flash = 0;
 
@@ -48,6 +48,18 @@
     for (let yy = l.y - 2; yy <= l.y + 2; yy++) for (let xx = l.x - 2; xx <= l.x + 2; xx++) map[yy][xx] = 'grass';
     map[l.y][l.x] = l.type;
   }
+  const areas = [
+    { x: 18, y: 12, r: 6, name: 'Jade Bamboo Grove', icon: 'bamboo' },
+    { x: 77, y: 15, r: 7, name: 'Cloudstep Monastery', icon: 'monastery' },
+    { x: 17, y: 56, r: 7, name: 'Moon Lotus Mere', icon: 'lotus' },
+    { x: 78, y: 56, r: 8, name: 'Ruins of the Fallen Sect', icon: 'ruins' },
+    { x: 47, y: 9, r: 5, name: 'Sword Saintâ€™s Grave', icon: 'swords' }
+  ];
+  for (const a of areas) {
+    for (let yy = a.y - a.r; yy <= a.y + a.r; yy++) for (let xx = a.x - a.r; xx <= a.x + a.r; xx++) {
+      if (yy > 2 && xx > 2 && yy < WORLD_H - 3 && xx < WORLD_W - 3 && Math.hypot(xx - a.x, yy - a.y) < a.r) map[yy][xx] = (a.icon === 'lotus' && hash(xx, yy, 18) < .22) ? 'water' : 'grass';
+    }
+  }
 
   const realms = [
     { name: 'Mortal', stages: 3, qi: 80 }, { name: 'Qi Condensation', stages: 5, qi: 150 },
@@ -61,12 +73,16 @@
     meditating: false, discoveries: new Set(['Crossroads Shrine'])
   };
   let enemies = [], plants = [], particles = [], slashes = [], pickups = [], messages = [], quest = 0;
+  let treasures = areas.map((a, i) => ({ x: (a.x + (i % 2 ? 3 : -3)) * TILE, y: (a.y + 2) * TILE, opened: false, area: a.name }));
+  let bossDefeated = false;
 
   const enemyTypes = {
     hare: { name: 'Ironhorn Hare', hp: 34, speed: 78, damage: 8, color: '#b78b72', xp: 14, r: 8 },
     wolf: { name: 'Ashfang Wolf', hp: 58, speed: 92, damage: 12, color: '#788191', xp: 24, r: 10 },
     wisp: { name: 'Lost Wisp', hp: 46, speed: 62, damage: 10, color: '#69cfb5', xp: 20, r: 8 },
     guardian: { name: 'Stone Guardian', hp: 120, speed: 46, damage: 18, color: '#9b8064', xp: 50, r: 13 }
+    ,serpent: { name: 'Mirecoil Serpent', hp: 76, speed: 70, damage: 14, color: '#668f5c', xp: 31, r: 11 }
+    ,rogue: { name: 'Demonic Cultivator', hp: 96, speed: 75, damage: 16, color: '#9d536b', xp: 42, r: 11 }
   };
 
   function passableAt(px, py, radius = 7) {
@@ -90,11 +106,14 @@
     enemies = Array.from({ length: 34 }, (_, i) => {
       const p = randomOpen(100 + i);
       const danger = Math.hypot(p.x / TILE - 47, p.y / TILE - 36);
-      const type = danger > 39 ? 'guardian' : danger > 25 ? (i % 3 ? 'wolf' : 'wisp') : (i % 4 ? 'hare' : 'wisp');
+      const px = p.x / TILE, py = p.y / TILE;
+      const type = px < 34 && py > 48 ? 'serpent' : px > 62 && py > 48 ? (i % 2 ? 'rogue' : 'guardian') : danger > 39 ? 'guardian' : danger > 25 ? (i % 3 ? 'wolf' : 'wisp') : (i % 4 ? 'hare' : 'wisp');
       const t = enemyTypes[type];
       return { ...p, type, hp: t.hp, maxHp: t.hp, vx: 0, vy: 0, hit: 0, attackCd: hash(i, 2) * 2, wander: hash(i, 3) * TAU, alive: true };
     });
     plants = Array.from({ length: 46 }, (_, i) => ({ ...randomOpen(300 + i), ready: true, respawn: 0, phase: hash(i, 8) * TAU }));
+    const boss = enemyTypes.guardian;
+    enemies.push({ x: 78 * TILE, y: 56 * TILE, type: 'guardian', hp: 320, maxHp: 320, vx: 0, vy: 0, hit: 0, attackCd: 1, wander: 0, alive: !bossDefeated, boss: true, respawn: 99999, title: 'Sectbreaker Golem' });
   }
 
   function addMessage(text, type = '') {
@@ -117,7 +136,7 @@
         x: player.x, y: player.y, hp: player.hp, qi: player.qi, maxQi: player.maxQi, maxHp: player.maxHp,
         xp: player.xp, xpNeed: player.xpNeed, realm: player.realm, stage: player.stage, stones: player.stones,
         herbs: player.herbs, kills: player.kills, attack: player.attack, quest, playTime,
-        discoveries: [...player.discoveries]
+        discoveries: [...player.discoveries], treasures: treasures.map(t => t.opened), bossDefeated
       }));
     } catch (_) {}
   }
@@ -130,12 +149,16 @@
       quest = Number.isFinite(d.quest) ? d.quest : 0;
       playTime = Number.isFinite(d.playTime) ? d.playTime : 0;
       if (Array.isArray(d.discoveries)) player.discoveries = new Set(d.discoveries);
+      if (Array.isArray(d.treasures)) d.treasures.forEach((opened, i) => { if (treasures[i]) treasures[i].opened = !!opened; });
+      bossDefeated = !!d.bossDefeated;
     } catch (_) {}
   }
 
   function tileUnder(o = player) { return map[clamp(Math.floor(o.y / TILE), 0, WORLD_H - 1)][clamp(Math.floor(o.x / TILE), 0, WORLD_W - 1)]; }
   function zoneName() {
     const tx = player.x / TILE, ty = player.y / TILE;
+    const found = areas.find(a => Math.hypot(tx - a.x, ty - a.y) < a.r + 1);
+    if (found) return found.name;
     if (Math.hypot(tx - 47, ty - 36) < 9) return 'Crossroads Shrine';
     if (ty < 24 && tx < 34) return 'Whispering Bamboo';
     if (ty < 24 && tx > 62) return 'Cloudstep Bluffs';
@@ -227,15 +250,26 @@
   }
 
   function killEnemy(e) {
-    e.alive = false; e.respawn = 18 + hash(player.kills, 9) * 18; player.kills++;
+    e.alive = false; e.respawn = e.boss ? 999999 : 18 + hash(player.kills, 9) * 18; player.kills++;
     const t = enemyTypes[e.type]; gainXp(t.xp);
     if (hash(player.kills, Math.floor(playTime), 12) > .43) pickups.push({ x: e.x, y: e.y, type: 'stone', life: 24, bob: hash(e.x|0,e.y|0)*TAU });
     burst(e.x, e.y, t.color, 18, 105);
     addMessage(`${t.name} was defeated.`, 'good');
+    if (e.boss) {
+      bossDefeated = true; player.stones += 12; player.qi = player.maxQi;
+      addMessage('Sectbreaker falls. The ruined inheritance is yours.', 'good'); flash = 1;
+      quest = Math.max(quest, 5); save();
+    }
     if (quest === 1) quest = 2;
   }
 
   function gather() {
+    const chest = treasures.find(t => !t.opened && dist(player, t) < 34);
+    if (chest) {
+      chest.opened = true; const reward = 3 + Math.floor(hash(t.x, t.y, 55) * 4);
+      player.stones += reward; player.qi = Math.min(player.maxQi, player.qi + 20); gainXp(25);
+      burst(chest.x, chest.y, '#f0cd72', 22, 95); addMessage(`Opened an ancient cache: ${reward} spirit stones.`, 'good'); save(); return;
+    }
     const plant = plants.find(p => p.ready && dist(player, p) < 28);
     if (plant) {
       plant.ready = false; plant.respawn = 35; player.herbs++;
@@ -274,6 +308,7 @@
     for (const e of enemies) {
       const t = enemyTypes[e.type];
       if (!e.alive) {
+        if (e.boss && bossDefeated) continue;
         e.respawn -= dt;
         if (e.respawn <= 0) { const p = randomOpen((player.kills + Math.floor(playTime)) * 7 + enemies.indexOf(e)); Object.assign(e, p, { hp: t.hp, alive: true }); }
         continue;
@@ -318,16 +353,23 @@
     const totalMins = (playTime * .42 + 330) % 1440, hour = Math.floor(totalMins / 60), day = 1 + Math.floor((playTime * .42 + 330) / 1440);
     const period = hour < 7 ? 'Dawn' : hour < 12 ? 'Morning' : hour < 17 ? 'Afternoon' : hour < 20 ? 'Dusk' : 'Night';
     ui.time.textContent = `${period} Â· Day ${day}`;
+    const veins = landmarks.filter(l => l.type === 'vein');
+    const nearest = veins.reduce((best, v) => Math.hypot(player.x / TILE - v.x, player.y / TILE - v.y) < Math.hypot(player.x / TILE - best.x, player.y / TILE - best.y) ? v : best, veins[0]);
+    const veinAngle = Math.atan2(nearest.y * TILE - player.y, nearest.x * TILE - player.x);
+    const veinDistance = Math.round(Math.hypot(nearest.x * TILE - player.x, nearest.y * TILE - player.y) / TILE);
+    ui.compassArrow.style.transform = `rotate(${veinAngle + Math.PI / 2}rad)`;
+    ui.compassText.textContent = tileUnder() === 'vein' ? 'You are standing in a spirit vein â€” press C' : `Nearest spirit vein Â· ${veinDistance} steps`;
     const q = [
-      'Find a glowing spirit vein and press <em>C</em> to cultivate.',
+      'Follow the <em>spirit compass</em> to a green beacon, then press <em>C</em>.',
       'Hunt a spirit beast. Strike with <em>Space</em>.',
       'Gather <em>3 moonleaf herbs</em> and survive the wilds.',
       `Fill your qi to break through. <em>${Math.floor(player.qi)} / ${player.maxQi}</em>`,
-      'Journey beyond the crossroads. Your path is your own.'
+      'Explore the five named regions and open their ancient caches with <em>E</em>.',
+      'The fallen sect is reclaimed. Seek every cache and cultivate further.'
     ];
     if (quest === 2 && player.herbs >= 3) quest = 3;
     if (quest === 3 && player.realm > 0) quest = 4;
-    ui.questText.innerHTML = q[quest] || q[4];
+    ui.questText.innerHTML = q[quest] || q[5];
   }
 
   function roman(n) { return ['I','II','III','IV','V'][n - 1] || String(n); }
@@ -367,6 +409,40 @@
     ctx.fillStyle = '#d6ec9e'; ctx.fillRect(s.x, s.y - 7 + bob, 2, 2);
   }
 
+  function drawLandmarks(cam, time) {
+    for (const l of landmarks) {
+      if (l.type !== 'vein') continue;
+      const s = screenPos((l.x + .5) * TILE, (l.y + .5) * TILE, cam);
+      const glow = .15 + Math.sin(time * 3 + l.x) * .05;
+      const g = ctx.createLinearGradient(0, s.y - 150, 0, s.y + 14);
+      g.addColorStop(0, 'rgba(105,255,196,0)'); g.addColorStop(1, `rgba(105,255,196,${glow})`);
+      ctx.fillStyle = g; ctx.fillRect(s.x - 18, s.y - 150, 36, 164);
+      ctx.strokeStyle = '#83f0c1aa'; ctx.strokeRect(s.x - 12, s.y - 12, 24, 24);
+    }
+    for (const a of areas) {
+      const s = screenPos(a.x * TILE, a.y * TILE, cam);
+      if (s.x < -100 || s.y < -100 || s.x > W + 100 || s.y > H + 100) continue;
+      ctx.fillStyle = '#080b10aa'; ctx.fillRect(s.x - 70, s.y - a.r * TILE + 8, 140, 17);
+      ctx.fillStyle = '#ead696'; ctx.font = '12px Georgia'; ctx.textAlign = 'center'; ctx.fillText(a.name, s.x, s.y - a.r * TILE + 21);
+      if (a.icon === 'monastery' || a.icon === 'ruins') {
+        ctx.fillStyle = a.icon === 'ruins' ? '#544a46' : '#704843';
+        ctx.fillRect(s.x - 30, s.y - 20, 60, 36); ctx.fillStyle = '#302a2b'; ctx.fillRect(s.x - 36, s.y - 25, 72, 7);
+        ctx.fillStyle = '#d2aa63'; ctx.fillRect(s.x - 4, s.y - 6, 8, 22);
+        if (a.icon === 'ruins') { ctx.clearRect(s.x + 12, s.y - 20, 9, 12); ctx.fillStyle = '#827263'; ctx.fillRect(s.x - 24, s.y - 32, 5, 12); }
+      } else if (a.icon === 'swords') {
+        ctx.strokeStyle = '#c4c9c5'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(s.x - 12,s.y - 24);ctx.lineTo(s.x + 10,s.y + 20);ctx.moveTo(s.x + 12,s.y - 24);ctx.lineTo(s.x - 10,s.y + 20);ctx.stroke();
+      } else if (a.icon === 'lotus') {
+        ctx.fillStyle = '#eaa9c2'; ctx.fillRect(s.x - 8, s.y - 5, 16, 10); ctx.fillStyle = '#f5d3df'; ctx.fillRect(s.x - 3, s.y - 9, 6, 15);
+      } else {
+        ctx.fillStyle = '#6ca75a'; for (let i=0;i<5;i++) ctx.fillRect(s.x - 28 + i * 13, s.y - 32 - (i%2)*8, 4, 52);
+      }
+    }
+    for (const t of treasures) {
+      if (t.opened) continue; const s = screenPos(t.x,t.y,cam);
+      ctx.fillStyle = '#1b1610'; ctx.fillRect(s.x - 10,s.y - 5,20,13); ctx.fillStyle = '#a77a34'; ctx.fillRect(s.x - 9,s.y - 8,18,6); ctx.fillStyle = '#efd372'; ctx.fillRect(s.x - 2,s.y - 4,4,6);
+    }
+  }
+
   function drawEnemy(e, cam, time) {
     if (!e.alive) return; const t = enemyTypes[e.type], s = screenPos(e.x, e.y, cam); if (s.x < -30 || s.y < -30 || s.x > W + 30 || s.y > H + 30) return;
     ctx.fillStyle = '#0006'; ctx.fillRect(s.x - t.r, s.y + t.r - 3, t.r * 2, 5);
@@ -380,6 +456,7 @@
       ctx.fillStyle = '#f1c35d'; ctx.fillRect(s.x - 4, s.y - 3, 2, 2); ctx.fillRect(s.x + 3, s.y - 3, 2, 2);
     }
     if (e.hp < e.maxHp) { ctx.fillStyle = '#1a1719'; ctx.fillRect(s.x - 14, s.y - t.r - 10, 28, 3); ctx.fillStyle = '#d55c55'; ctx.fillRect(s.x - 14, s.y - t.r - 10, 28 * e.hp / e.maxHp, 3); }
+    if (e.boss) { ctx.fillStyle = '#f0c96f'; ctx.font = '12px Georgia'; ctx.textAlign = 'center'; ctx.fillText(e.title, s.x, s.y - t.r - 17); }
   }
 
   function drawPlayer(cam) {
@@ -401,6 +478,8 @@
     for (let y = 0; y < WORLD_H; y += 3) for (let x = 0; x < WORLD_W; x += 3) {
       const type = map[y][x]; ctx.fillStyle = colors[type]?.[0] || '#334'; ctx.fillRect(x0 + x / WORLD_W * mw, y0 + y / WORLD_H * mh, 4, 4);
     }
+    for (const l of landmarks) { ctx.fillStyle = l.type === 'vein' ? '#73f0bd' : '#e8c76d'; ctx.fillRect(x0 + l.x / WORLD_W * mw - 2, y0 + l.y / WORLD_H * mh - 2, 5, 5); }
+    for (const a of areas) { ctx.strokeStyle = '#f0d18b'; ctx.strokeRect(x0 + a.x / WORLD_W * mw - 2.5, y0 + a.y / WORLD_H * mh - 2.5, 5, 5); }
     ctx.fillStyle = '#ffe18a'; ctx.fillRect(x0 + player.x / (WORLD_W * TILE) * mw - 2, y0 + player.y / (WORLD_H * TILE) * mh - 2, 5, 5);
     ctx.strokeStyle = '#ffffff38'; ctx.strokeRect(x0 + cam.x / (WORLD_W * TILE) * mw, y0 + cam.y / (WORLD_H * TILE) * mh, W / (WORLD_W * TILE) * mw, H / (WORLD_H * TILE) * mh);
   }
@@ -412,6 +491,7 @@
     ctx.fillStyle = '#17231f'; ctx.fillRect(0, 0, W, H);
     const x0 = Math.floor(cam.x / TILE), y0 = Math.floor(cam.y / TILE), x1 = Math.ceil((cam.x + W) / TILE), y1 = Math.ceil((cam.y + H) / TILE);
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (x >= 0 && y >= 0 && x < WORLD_W && y < WORLD_H) drawTile(map[y][x], x * TILE - cam.x, y * TILE - cam.y, x, y, time);
+    drawLandmarks(cam, time);
     plants.forEach(p => drawPlant(p, cam, time));
     pickups.forEach(p => { const s = screenPos(p.x, p.y, cam), b = Math.sin(time * 5 + p.bob) * 3; ctx.fillStyle = '#07110eaa'; ctx.fillRect(s.x - 6, s.y + 6, 12, 3); ctx.fillStyle = '#79e1b7'; ctx.fillRect(s.x - 4, s.y - 5 + b, 8, 9); ctx.fillStyle = '#c8ffe9'; ctx.fillRect(s.x - 1, s.y - 3 + b, 3, 4); });
     enemies.slice().sort((a,b)=>a.y-b.y).forEach(e => drawEnemy(e, cam, time));
