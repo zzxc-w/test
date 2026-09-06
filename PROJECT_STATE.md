@@ -8,21 +8,23 @@ _Last updated: 2026-09-06. Treat this as a continuity summary, not a substitute 
 
 The project is a dependency-free static site:
 
-- `index.html` contains the page structure, CSS, HUD, start overlay, settings/dev dialogs, responsive touch controls, and a fixed 960x540 canvas. It loads `game.js?v=6`.
+- `index.html` contains the page structure, CSS, HUD, start overlay, settings/dev dialogs, responsive touch controls, and a fixed 960x540 canvas. It loads `game.js?v=7`.
 - `game.js` is a single IIFE containing game data, deterministic world generation, input, update/render loops, combat, exploration, progression, quests, and save/load logic.
 - Graphics are drawn procedurally with Canvas 2D; smoothing is disabled for a pixel-art look.
 - There is no framework, package manager, build step, backend, account system, or asset pipeline.
-- Saves are device-local in `localStorage` under `verdant-star-save`; the current schema is version 4.
+- Saves are device-local in `localStorage` under `verdant-star-save`; the current schema is version 5.
 
 ## Implemented
 
 - Keyboard and touch movement, sword attack, 20-qi sword-seal AOE, gathering, cultivation, and cloud-step dash.
 - An 84 px terrain-phasing dash with a cultivation-scaled 0.72-to-0.36-second cooldown, safe landing checks, a visible trail, and 0.48 seconds of invulnerability.
-- Deterministic 96x72-tile world with grass, forest, water, stone, pilgrim roads, landmark clearings, minimap, zone discovery, spirit-vein compass, and day/night tint.
-- Five named regions: Jade Bamboo Grove, Cloudstep Monastery, Moon Lotus Mere, Ruins of Fallen Sect, and Sword Saint's Grave.
-- Four green spirit veins, three shrines, five ancient caches, guaranteed and procedural herbs, enemy drops, and resource respawning.
-- Enemy AI, melee combat, health/damage, respawns, multiple enemy types, and the Sectbreaker Golem regional boss.
-- Cultivation progression from Mortal through Qi Condensation, Foundation, Golden Core, and Nascent Soul, including stages, qi, XP, stats, herbs, spirit stones, and quests.
+- Deterministic 144x108-tile world that preserves old coordinates and adds connected roads, landmarks, minimap discovery, and four new regions: Mistglass Ravine, Myriad Root Hollow, Emberglass Kiln, and Starfall Crater.
+- Eight green spirit veins, five shrines, nine ancient caches, herbs, four regional ingredient types, enemy drops, and resource respawning whose cooldown survives reloads.
+- Telegraph-based enemy attacks with windup/active/recovery animation states, timed parry, stagger and riposte windows, harder fixed enemy damage, and unparryable crimson boss slams.
+- Five persistent bosses with unique key-item drops: Jadehorn Stag, Tempest Crane, Mirecoil Matriarch, Sectbreaker Golem, and Starfallen Warden.
+- Cultivation progression from Mortal through Nascent Soul. Full qi now requires a second cultivation action plus consumable regional ingredients/stones or durable boss keys; missing requirements provide lore clues rather than waypoints.
+- Guidance contains only the attack/parry and cultivation tutorial, then hides itself and the compass for discovery-led play.
+- Minimap destination markers appear only after the player approaches or discovers their region.
 - Autosave and frame-level error recovery.
 - A settings dialog with a two-step, game-save-only progress reset, plus a non-persistent hidden developer test chamber opened with `Ctrl+Shift+Alt+D`.
 - GitHub Pages deployment from `main`. The workflow syntax-checks `game.js`, runs dependency-free smoke tests, uploads the static repository, and deploys it.
@@ -34,7 +36,11 @@ The project is a dependency-free static site:
 - Preserve `verdant-star-save`, schema-version migration behavior, and existing player progress when changing saved state.
 - The version-3 migration intentionally restores caches affected by an older cache-reward crash. Do not remove that compatibility behavior casually.
 - Version 4 reconciles durable quest facts (kills, herbs, realm, caches, and boss state) in order. Boss defeat never bypasses unfinished cache requirements, and old saves with an already-defeated boss can complete once prerequisites are met.
+- Version 5 migrates the old quest into two tutorial flags, adds stable boss state, regional ingredients, and key items, and grants the Sectbreaker Core to any save that had already defeated the old boss.
 - Cultivation belongs near the green spirit veins, not at shrines or the sword-grave/cross landmark.
+- Preserve all legacy world coordinates when expanding the map. Append areas/caches instead of reordering them so old positions and cache-save indices remain valid.
+- Boss strength is fixed rather than player-scaled. Unique boss keys are durable proof of victory and are checked, not consumed, during realm breakthroughs.
+- Defeated-boss flags are authoritative: load repair and developer material clearing must preserve/rederive their durable keys to prevent softlocks.
 - Area generation is followed by landmark restoration so region painting cannot erase functional vein and shrine tiles.
 - Keep keyboard and touch controls functionally equivalent, including dash access.
 - Preserve the authored road network, navigable clearings, and distinct visual language for green veins, gold caches, and glowing herbs.
@@ -55,14 +61,15 @@ The project is a dependency-free static site:
 - Added save-state sanitization and forward-only quest reconciliation, including repair for saves where the boss was defeated before the cache objective completed.
 - Added settings, safe clear-progress handling, and a hidden testing menu for stats, progression, travel, time, boss/cache state, cooldowns, and saving.
 - Hardened iPad Safari controls with selection/callout suppression, explicit pressed-state styling, multitouch reference counting, and cleanup after cancelled/lost pointers, app switching, page hiding, and menu changes.
+- Expanded the world without shifting legacy locations; restored roads, boss arenas, cache clearings, and landmark tiles after biome painting.
+- Added enemy attack telegraphs/animation phases, parry and riposte combat, five boss key drops, and material-gated breakthroughs.
+- Replaced post-tutorial objectives with self-directed exploration; the settings inventory shows materials, keys, and next breakthrough requirements.
 
 ## Current state and known issues
 
-- The latest milestone is cultivation-scaled terrain-phasing dash, v4 quest/save repair, settings-based progress reset, and the hidden developer test chamber.
-- CI performs JavaScript syntax validation and dependency-free state/quest/dash/reset smoke tests, but still lacks full real-browser interaction coverage. Test desktop and touch behavior manually after major UI or input changes.
+- The latest milestone is the 144x108 exploration expansion, phased enemy combat/parry system, five-boss key progression, material-gated cultivation, and v5 migration.
+- CI performs JavaScript syntax validation and dependency-free migration, progression, combat, dash, reset, and touch-state smoke tests, but still lacks full real-browser interaction coverage. Test desktop and touch behavior manually after major UI or input changes.
 - `game.js` and the inline CSS are monolithic. Concurrent broad edits are likely to conflict; use small branches/PRs and avoid assigning two people overlapping sections of `game.js`.
-- Some punctuation/icon strings may be mojibake (for example broken apostrophes or symbols). Verify in the deployed game before changing source encoding.
-- One cache appears to overlap the southwest spirit-vein location and may confuse interaction or visuals.
 - `main` was unprotected at the last check. `hydrogendesigns` currently resolves to read access, which likely means the collaborator invitation has not yet been accepted.
 - This task's local working folder was not a Git checkout, so uncommitted work on another person's machine cannot be represented here.
 
@@ -71,7 +78,7 @@ The project is a dependency-free static site:
 - `game.js` — all game systems, world content, state, saving, update loop, and rendering.
 - `index.html` — layout, styling, canvas, HUD, overlays, touch controls, and script loading.
 - `.github/workflows/pages.yml` — syntax validation and GitHub Pages deployment.
-- `tests/smoke-test.js` — dependency-free VM tests for dash scaling/landing, save migration, quest repair, hidden-menu activation, and safe progress clearing.
+- `tests/smoke-test.js` — dependency-free VM tests for map/content invariants, dash, save migration, gated breakthroughs, parry/attacks, hidden-menu activation, touch cleanup, and safe progress clearing.
 - `README.md` — player overview, controls, live link, and local-running notes.
 - `CONTRIBUTING.md` — shared branch, testing, commit, and pull-request workflow.
 - `AGENTS.md` — instructions for agents and project-continuity maintenance.
@@ -81,7 +88,7 @@ The project is a dependency-free static site:
 
 1. Confirm `hydrogendesigns` has accepted the invitation and now has write access.
 2. Work from the latest `main` using one feature branch per change; use pull requests and avoid simultaneous edits to the same monolithic file.
-3. Smoke-test production on desktop and touch, including old saves, cache opening, herb gathering, cultivation proximity, terrain-phasing dash landing, scaled cooldowns, invulnerability, settings reset, and developer tools.
-4. Fix verified encoding artifacts and separate the southwest cache from its spirit vein.
+3. Smoke-test production on desktop and touch, especially enemy telegraphs/parry timing, all boss drops, every breakthrough requirement, new-region navigation, old saves, and iPad multitouch.
+4. Fix verified encoding artifacts.
 5. Add real-browser interaction coverage when the UI grows further.
 6. Before major parallel feature work, modularize `game.js` incrementally with behavior and save-compatibility checks.

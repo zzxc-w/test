@@ -8,12 +8,13 @@ A pixel-styled top-down cultivation adventure that runs directly in a browser.
 
 - **WASD / arrow keys:** move
 - **Space:** sword strike
+- **F / L:** parry a gold-flashing enemy attack; strike the staggered enemy for a riposte
 - **Shift / K:** cloud-step dash
-- **C:** cultivate inside a green spirit-vein beacon
-- **E:** gather moonleaf or open a gold ancient cache
+- **C:** cultivate inside a green spirit-vein beacon; when qi is full, attempt a material-gated breakthrough
+- **E:** gather herbs, regional ingredients, or open a gold ancient cache
 - **Q:** cast sword seal (costs 20 qi)
 
-Progress is saved in the browser automatically.
+After the short combat/cultivation tutorial, exploration is self-directed. Regional materials and unique boss drops unlock later cultivation stages. Progress is saved in the browser automatically.
 
 ## Local development
 
