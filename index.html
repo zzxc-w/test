@@ -59,7 +59,7 @@
       box-shadow: inset 0 0 0 1px #0008, 0 4px 18px #0007;
       backdrop-filter: blur(3px);
     }
-    .vitals { padding: 10px 12px; }
+    .vitals { position: relative; padding: 10px 55px 10px 12px; }
     .name-row, .realm-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
     .name { color: #fff4d3; font-weight: bold; letter-spacing: .04em; }
     .realm { color: var(--gold); font-size: .82rem; }
@@ -75,6 +75,26 @@
     .resources { padding: 9px 12px; font-size: .83rem; line-height: 1.55; }
     .resources div { display: flex; justify-content: space-between; gap: 16px; }
     .resources b { color: #f5d988; font-weight: normal; }
+    #settingsButton {
+      position: absolute;
+      top: 7px;
+      right: 8px;
+      width: auto;
+      margin: 0;
+      padding: 4px 8px;
+      border: 1px solid #d2c18d55;
+      background: #17212b;
+      color: #d8d4c8;
+      cursor: pointer;
+      pointer-events: auto;
+      font: .72rem/1.2 system-ui, sans-serif;
+    }
+    #settingsButton:hover, #settingsButton:focus-visible, .menu-card button:hover, .menu-card button:focus-visible {
+      border-color: var(--gold);
+      color: #fff2c7;
+      outline: 2px solid #e9c76e88;
+      outline-offset: 1px;
+    }
     #quest {
       position: absolute;
       top: 105px;
@@ -161,6 +181,48 @@
     .actions { grid-template-columns: repeat(2, 54px); }
     .touch-btn { border: 1px solid #d2c18d70; background: #111923ba; color: #f3ddb0; border-radius: 4px; min-height: 40px; touch-action: none; }
     .touch-btn:active { background: #4b755f; }
+    .modal {
+      position: absolute;
+      inset: 0;
+      z-index: 30;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      background: #04070dcc;
+      backdrop-filter: blur(4px);
+    }
+    .modal[hidden], [hidden] { display: none !important; }
+    .menu-card {
+      width: min(640px, 94vw);
+      max-height: min(680px, 92vh);
+      overflow: auto;
+      padding: 20px;
+      border: 1px solid #71613e;
+      background: #0c131df5;
+      box-shadow: 0 18px 55px #000c;
+      font: .88rem/1.4 system-ui, sans-serif;
+    }
+    .menu-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+    .menu-head h2 { margin: 0; color: #f1d38d; font: 1.2rem/1.2 Georgia, serif; }
+    .menu-card h3 { margin: 14px 0 7px; color: #b8ead4; font-size: .82rem; letter-spacing: .08em; text-transform: uppercase; }
+    .menu-card p { color: #adb7b2; }
+    .menu-card button {
+      min-height: 34px;
+      padding: 6px 10px;
+      border: 1px solid #d2c18d55;
+      background: #17212b;
+      color: #d8d4c8;
+      cursor: pointer;
+    }
+    .menu-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+    .danger-zone { margin-top: 18px; padding: 12px; border: 1px solid #9e4f4a88; background: #321b1b66; }
+    .danger-zone h3 { margin-top: 0; color: #f4aaa4; }
+    .danger-zone .danger { border-color: #b95d56; color: #ffc0ba; }
+    #clearConfirm { margin-top: 9px; }
+    .dev-status { margin: 0 0 12px; padding: 9px; border: 1px solid #4f665e; background: #09110f; color: #aaf0d0; white-space: pre-wrap; }
+    .dev-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; }
+    .dev-group { min-width: 0; }
+    .dev-group.wide { grid-column: 1 / -1; }
     @media (pointer: coarse), (max-width: 720px) {
       #touch { display: flex; }
       .bottom-help { display: none; }
@@ -169,6 +231,9 @@
       .resources { font-size: .72rem; }
       #quest { top: 98px; width: 46vw; font-size: .7rem; }
       #messages { bottom: 120px; }
+      .menu-card { padding: 15px; }
+      .dev-grid { grid-template-columns: 1fr; }
+      .dev-group.wide { grid-column: auto; }
     }
     @media (max-height: 540px) { #quest { display: none; } .topbar { top: 6px; } }
   </style>
@@ -179,6 +244,7 @@
     <div class="topbar" aria-live="polite">
       <section class="panel vitals">
         <div class="name-row"><span class="name">Wandering Disciple</span><span class="realm" id="realm">Mortal Â· I</span></div>
+        <button id="settingsButton" type="button" aria-haspopup="dialog">Menu</button>
         <div class="bar hp"><i id="hpFill"></i><small id="hpText">100 / 100</small></div>
         <div class="bar qi"><i id="qiFill"></i><small id="qiText">0 / 100 qi</small></div>
         <div class="bar xp"><i id="xpFill"></i></div>
@@ -204,6 +270,52 @@
         <button class="touch-btn" data-key="c">Cultivate</button><button class="touch-btn" data-key="e">Gather</button><button class="touch-btn" data-key="shift">Dash</button><button class="touch-btn" data-key="q">Seal</button><button class="touch-btn" data-key=" ">Strike</button>
       </div>
     </div>
+    <section id="settingsMenu" class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
+      <div class="menu-card">
+        <div class="menu-head"><h2 id="settingsTitle">Settings</h2><button id="closeSettings" type="button">Close</button></div>
+        <h3>Controls</h3>
+        <p><kbd>WASD</kbd> move, <kbd>Space</kbd> strike, <kbd>Shift</kbd> dash, <kbd>C</kbd> cultivate, <kbd>E</kbd> gather, and <kbd>Q</kbd> cast a sword seal.</p>
+        <div class="danger-zone">
+          <h3>Clear progress</h3>
+          <p>Deletes only this game's save from this device. This cannot be undone.</p>
+          <button id="clearProgress" class="danger" type="button">Clear progress...</button>
+          <div id="clearConfirm" class="menu-actions" hidden>
+            <button id="confirmClear" class="danger" type="button">Delete save and restart</button>
+            <button id="cancelClear" type="button">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section id="devMenu" class="modal" role="dialog" aria-modal="true" aria-labelledby="devTitle" hidden>
+      <div class="menu-card">
+        <div class="menu-head"><h2 id="devTitle">Cultivator Test Chamber</h2><button id="closeDev" type="button">Close</button></div>
+        <pre id="devStatus" class="dev-status" aria-live="polite"></pre>
+        <div class="dev-grid">
+          <section class="dev-group"><h3>Player</h3><div class="menu-actions">
+            <button data-dev-action="heal">Heal</button><button data-dev-action="refill-qi">Refill qi</button>
+            <button data-dev-action="add-herbs">+10 herbs</button><button data-dev-action="add-stones">+25 stones</button>
+            <button data-dev-action="add-xp">Gain level XP</button><button data-dev-action="advance-cultivation">Advance cultivation</button>
+            <button data-dev-action="toggle-invulnerable">Toggle invulnerability</button><button data-dev-action="toggle-cooldowns">Toggle no cooldowns</button>
+          </div></section>
+          <section class="dev-group"><h3>Progress</h3><div class="menu-actions">
+            <button data-dev-action="quest-prev">Quest -1</button><button data-dev-action="quest-next">Quest +1</button>
+            <button data-dev-action="reconcile">Reconcile objectives</button><button data-dev-action="open-caches">Open all caches</button>
+            <button data-dev-action="reset-caches">Reset caches</button><button data-dev-action="defeat-boss">Defeat boss</button>
+            <button data-dev-action="respawn-boss">Respawn boss</button>
+          </div></section>
+          <section class="dev-group wide"><h3>Travel</h3><div class="menu-actions">
+            <button data-dev-travel="crossroads">Crossroads</button><button data-dev-travel="vein-nw">NW vein</button>
+            <button data-dev-travel="vein-ne">NE vein</button><button data-dev-travel="vein-sw">SW vein</button><button data-dev-travel="vein-se">SE vein</button>
+            <button data-dev-travel="grove">Bamboo Grove</button><button data-dev-travel="monastery">Monastery</button>
+            <button data-dev-travel="mere">Lotus Mere</button><button data-dev-travel="grave">Sword Grave</button><button data-dev-travel="ruins">Fallen Sect</button>
+          </div></section>
+          <section class="dev-group wide"><h3>World and save</h3><div class="menu-actions">
+            <button data-dev-action="dawn">Dawn</button><button data-dev-action="noon">Noon</button><button data-dev-action="night">Night</button>
+            <button data-dev-action="save-now">Save now</button><button data-dev-action="reload-save">Reload saved game</button>
+          </div></section>
+        </div>
+      </div>
+    </section>
     <section id="overlay">
       <div class="title-card">
         <div class="sigil">âœ¦</div>
@@ -214,7 +326,7 @@
       </div>
     </section>
   </main>
-  <script src="game.js?v=4"></script>
+  <script src="game.js?v=5"></script>
 </body>
 </html>
 
