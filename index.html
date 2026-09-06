@@ -27,6 +27,12 @@
         radial-gradient(circle at 50% 20%, #182837 0, #0b111b 43%, #05080e 100%);
     }
     button { font: inherit; }
+    button, canvas, #touch {
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+    }
     #shell {
       position: relative;
       width: min(100vw, 1120px);
@@ -179,8 +185,8 @@
     .pad { grid-template: repeat(3, 40px) / repeat(3, 40px); }
     .pad button:nth-child(1){grid-area:1/2}.pad button:nth-child(2){grid-area:2/1}.pad button:nth-child(3){grid-area:2/2}.pad button:nth-child(4){grid-area:2/3}
     .actions { grid-template-columns: repeat(2, 54px); }
-    .touch-btn { border: 1px solid #d2c18d70; background: #111923ba; color: #f3ddb0; border-radius: 4px; min-height: 40px; touch-action: none; }
-    .touch-btn:active { background: #4b755f; }
+    .touch-btn { border: 1px solid #d2c18d70; background: #111923ba; color: #f3ddb0; border-radius: 4px; min-height: 40px; touch-action: none; -webkit-appearance: none; appearance: none; cursor: default; }
+    .touch-btn.is-pressed { background: #4b755f; }
     .modal {
       position: absolute;
       inset: 0;
@@ -326,7 +332,6 @@
       </div>
     </section>
   </main>
-  <script src="game.js?v=5"></script>
+  <script src="game.js?v=6"></script>
 </body>
 </html>
-
