@@ -137,7 +137,7 @@
   function save() {
     try {
       localStorage.setItem('verdant-star-save', JSON.stringify({
-        version: 2,
+        version: 3,
         x: player.x, y: player.y, hp: player.hp, qi: player.qi, maxQi: player.maxQi, maxHp: player.maxHp,
         xp: player.xp, xpNeed: player.xpNeed, realm: player.realm, stage: player.stage, stones: player.stones,
         herbs: player.herbs, kills: player.kills, attack: player.attack, quest, playTime,
@@ -154,7 +154,8 @@
       quest = Number.isFinite(d.quest) ? d.quest : 0;
       playTime = Number.isFinite(d.playTime) ? d.playTime : 0;
       if (Array.isArray(d.discoveries)) player.discoveries = new Set(d.discoveries);
-      if (Array.isArray(d.treasures)) d.treasures.forEach((opened, i) => { if (treasures[i]) treasures[i].opened = !!opened; });
+      // Version 2 could autosave a chest as opened before its reward threw an error.
+      if (d.version >= 3 && Array.isArray(d.treasures)) d.treasures.forEach((opened, i) => { if (treasures[i]) treasures[i].opened = !!opened; });
       bossDefeated = !!d.bossDefeated;
       // Old or partially-written saves must never create an unbounded level-up loop.
       player.xpNeed = clamp(Math.floor(player.xpNeed) || 60, 20, 1000000);
