@@ -24,6 +24,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate JavaScript
         run: node --check game.js
+      - name: Run gameplay smoke tests
+        run: node tests/smoke-test.js game.js index.html
       - uses: actions/configure-pages@v5
         with:
           enablement: true
