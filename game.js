@@ -8,6 +8,12 @@
   const W = canvas.width, H = canvas.height, TILE = 24;
   const WORLD_W = 96, WORLD_H = 72;
   const TAU = Math.PI * 2;
+  const SAVE_KEY = 'verdant-star-save';
+  const SAVE_VERSION = 4;
+  const DASH_DISTANCE = 84;
+  const DASH_BASE_COOLDOWN = .72;
+  const DASH_MIN_COOLDOWN = .36;
+  const DASH_COOLDOWN_STEP = .036;
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
   const lerp = (a, b, t) => a + (b - a) * t;
@@ -17,9 +23,11 @@
     return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
   };
 
-  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','caches','zone','time','questText','messages','overlay','start','compassArrow','compassText','interactPrompt'].map(id => [id, document.getElementById(id)]));
+  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','caches','zone','time','questText','messages','overlay','start','compassArrow','compassText','interactPrompt','settingsButton','settingsMenu','closeSettings','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus'].map(id => [id, document.getElementById(id)]));
   const keys = new Set(), taps = new Set();
   let started = false, paused = false, last = performance.now(), playTime = 0, shake = 0, flash = 0, runtimeErrorShown = false;
+  let activeMenu = null, menuWasPaused = false, suppressSave = false, loadedSaveVersion = 0;
+  const dev = { invulnerable: false, noCooldowns: false };
 
   const colors = {
     grass: ['#314f38', '#35563d'], forest: ['#223d31', '#274636'], water: ['#183b49', '#1c4653'],
@@ -134,10 +142,49 @@
     }
   }
 
+  function openedCacheCount() { return treasures.reduce((total, t) => total + (t.opened ? 1 : 0), 0); }
+
+  function cultivationAdvancements() {
+    let total = Math.max(0, player.stage - 1);
+    for (let i = 0; i < player.realm; i++) total += realms[i].stages;
+    return total;
+  }
+
+  function dashCooldownDuration() {
+    const reductions = Math.min(10, cultivationAdvancements());
+    return Math.max(DASH_MIN_COOLDOWN, DASH_BASE_COOLDOWN - reductions * DASH_COOLDOWN_STEP);
+  }
+
+  function reconcileQuestProgress() {
+    const before = quest;
+    if (quest === 1 && player.kills > 0) quest = 2;
+    if (quest === 2 && player.herbs >= 3) quest = 3;
+    if (quest === 3 && player.realm > 0) quest = 4;
+    if (quest === 4 && openedCacheCount() >= treasures.length) quest = 5;
+    if (quest === 5 && bossDefeated) quest = 6;
+    return quest !== before;
+  }
+
+  function sanitizeLoadedState() {
+    player.realm = clamp(Math.floor(player.realm) || 0, 0, realms.length - 1);
+    player.stage = clamp(Math.floor(player.stage) || 1, 1, realms[player.realm].stages);
+    player.maxHp = clamp(Math.floor(player.maxHp) || 100, 1, 1000000);
+    player.maxQi = clamp(Math.floor(player.maxQi) || realms[player.realm].qi, 1, 1000000);
+    player.hp = clamp(player.hp, 0, player.maxHp);
+    player.qi = clamp(player.qi, 0, player.maxQi);
+    player.attack = clamp(Math.floor(player.attack) || 16, 1, 1000000);
+    player.stones = clamp(Math.floor(player.stones) || 0, 0, 100000000);
+    player.herbs = clamp(Math.floor(player.herbs) || 0, 0, 100000000);
+    player.kills = clamp(Math.floor(player.kills) || 0, 0, 100000000);
+    quest = clamp(Math.floor(quest) || 0, 0, 6);
+    if (!passableAt(player.x, player.y, player.r)) { player.x = 47.5 * TILE; player.y = 39 * TILE; }
+  }
+
   function save() {
+    if (suppressSave) return;
     try {
-      localStorage.setItem('verdant-star-save', JSON.stringify({
-        version: 3,
+      localStorage.setItem(SAVE_KEY, JSON.stringify({
+        version: SAVE_VERSION,
         x: player.x, y: player.y, hp: player.hp, qi: player.qi, maxQi: player.maxQi, maxHp: player.maxHp,
         xp: player.xp, xpNeed: player.xpNeed, realm: player.realm, stage: player.stage, stones: player.stones,
         herbs: player.herbs, kills: player.kills, attack: player.attack, quest, playTime,
@@ -148,8 +195,9 @@
 
   function load() {
     try {
-      const d = JSON.parse(localStorage.getItem('verdant-star-save'));
-      if (!d) return;
+      const d = JSON.parse(localStorage.getItem(SAVE_KEY));
+      if (!d) return false;
+      loadedSaveVersion = Number.isFinite(d.version) ? Math.floor(d.version) : 0;
       for (const k of ['x','y','hp','qi','maxQi','maxHp','xp','xpNeed','realm','stage','stones','herbs','kills','attack']) if (Number.isFinite(d[k])) player[k] = d[k];
       quest = Number.isFinite(d.quest) ? d.quest : 0;
       playTime = Number.isFinite(d.playTime) ? d.playTime : 0;
@@ -160,7 +208,9 @@
       // Old or partially-written saves must never create an unbounded level-up loop.
       player.xpNeed = clamp(Math.floor(player.xpNeed) || 60, 20, 1000000);
       player.xp = clamp(Math.floor(player.xp) || 0, 0, player.xpNeed * 10);
-    } catch (_) {}
+      sanitizeLoadedState();
+      return true;
+    } catch (_) { return false; }
   }
 
   function tileUnder(o = player) { return map[clamp(Math.floor(o.y / TILE), 0, WORLD_H - 1)][clamp(Math.floor(o.x / TILE), 0, WORLD_W - 1)]; }
@@ -211,6 +261,7 @@
     burst(player.x, player.y, '#f1d47a', 38, 135);
     addMessage(`Breakthrough! ${nr.name}, stage ${player.stage}.`, 'good');
     if (quest < 3) quest = 3;
+    reconcileQuestProgress();
     save();
   }
 
@@ -271,9 +322,9 @@
     if (e.boss) {
       bossDefeated = true; player.stones += 12; player.qi = player.maxQi;
       addMessage('Sectbreaker falls. The ruined inheritance is yours.', 'good'); flash = 1;
-      quest = Math.max(quest, 6); save();
+      reconcileQuestProgress(); save();
     }
-    if (quest === 1) quest = 2;
+    reconcileQuestProgress();
   }
 
   function gather() {
@@ -281,13 +332,14 @@
     if (chest) {
       chest.opened = true; const reward = 3 + Math.floor(hash(chest.x, chest.y, 55) * 4);
       player.stones += reward; player.qi = Math.min(player.maxQi, player.qi + 20); gainXp(25);
-      burst(chest.x, chest.y, '#f0cd72', 22, 95); addMessage(`Opened an ancient cache: ${reward} spirit stones.`, 'good'); save(); return;
+      burst(chest.x, chest.y, '#f0cd72', 22, 95); addMessage(`Opened an ancient cache: ${reward} spirit stones.`, 'good'); reconcileQuestProgress(); save(); return;
     }
     const plant = plants.find(p => p.ready && dist(player, p) < 42);
     if (plant) {
       plant.ready = false; plant.respawn = 35; player.herbs++;
       burst(plant.x, plant.y, '#82c86b', 9, 45); addMessage('Gathered moonleaf herb.', 'good');
       if (player.herbs % 3 === 0) { player.hp = Math.min(player.maxHp, player.hp + 25); addMessage('Three herbs mend your wounds.', 'good'); }
+      reconcileQuestProgress();
       return;
     }
     addMessage('No ripe spirit herb is within reach.');
@@ -298,13 +350,14 @@
     if (!dx && !dy) { dx = Math.cos(player.facing); dy = Math.sin(player.facing); }
     const n = Math.hypot(dx, dy) || 1; dx /= n; dy /= n;
     const fromX = player.x, fromY = player.y;
-    // Step the teleport so cliffs and water still stop the player cleanly.
-    for (let i = 0; i < 12; i++) {
-      const nx = player.x + dx * 7, ny = player.y + dy * 7;
-      if (!passableAt(nx, ny, player.r)) break;
-      player.x = nx; player.y = ny;
+    // Only the landing must be clear: cloud-step can cross terrain but never end inside it.
+    for (let distance = DASH_DISTANCE; distance >= 0; distance -= 7) {
+      const nx = clamp(fromX + dx * distance, player.r, WORLD_W * TILE - player.r);
+      const ny = clamp(fromY + dy * distance, player.r, WORLD_H * TILE - player.r);
+      if (!passableAt(nx, ny, player.r)) continue;
+      player.x = nx; player.y = ny; break;
     }
-    player.dashCd = .72; player.invuln = .48;
+    player.dashCd = dashCooldownDuration(); player.invuln = .48;
     for (let i = 0; i < 10; i++) particles.push({ x: lerp(fromX, player.x, i / 9), y: lerp(fromY, player.y, i / 9), vx: 0, vy: 0, life: .25 + i * .015, max: .4, color: '#baf5dc', size: 5 });
   }
 
@@ -321,6 +374,7 @@
     playTime += dt;
     player.attackCd = Math.max(0, player.attackCd - dt); player.attackTimer = Math.max(0, player.attackTimer - dt);
     player.dashCd = Math.max(0, player.dashCd - dt); player.invuln = Math.max(0, player.invuln - dt); player.talismanCd = Math.max(0, player.talismanCd - dt);
+    if (dev.noCooldowns) player.attackCd = player.dashCd = player.talismanCd = 0;
     player.meditating = false;
 
     let dx = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
@@ -348,7 +402,7 @@
       else { e.wander += (hash(Math.floor(playTime / 2), enemies.indexOf(e), 3) - .5) * .12; a = e.wander; }
       const speed = t.speed * (d < 190 ? 1 : .28);
       moveEntity(e, Math.cos(a) * speed * dt, Math.sin(a) * speed * dt, t.r);
-      if (d < player.r + t.r + 5 && e.attackCd <= 0 && player.invuln <= 0) {
+      if (d < player.r + t.r + 5 && e.attackCd <= 0 && player.invuln <= 0 && !dev.invulnerable) {
         e.attackCd = 1.05; player.hp -= t.damage; player.invuln = .55; shake = 7;
         burst(player.x, player.y, '#e96961', 10, 90); addMessage(`${t.name} strikes for ${t.damage}.`, 'bad');
         if (player.hp <= 0) {
@@ -368,6 +422,7 @@
 
     const zn = zoneName();
     if (!player.discoveries.has(zn)) { player.discoveries.add(zn); addMessage(`Discovered: ${zn}`, 'good'); save(); }
+    if (reconcileQuestProgress()) save();
     if (Math.floor(playTime) % 12 === 0 && Math.floor((playTime - dt)) % 12 !== 0) save();
     updateUI();
   }
@@ -377,7 +432,7 @@
     ui.qiFill.style.width = `${100 * player.qi / player.maxQi}%`; ui.qiText.textContent = `${Math.floor(player.qi)} / ${player.maxQi} qi`;
     ui.xpFill.style.width = `${100 * player.xp / player.xpNeed}%`;
     ui.realm.textContent = `${realms[player.realm].name} Â· ${roman(player.stage)}`;
-    const openedCaches = treasures.filter(t => t.opened).length;
+    const openedCaches = openedCacheCount();
     ui.stones.textContent = player.stones; ui.herbs.textContent = player.herbs; ui.kills.textContent = player.kills; ui.caches.textContent = `${openedCaches} / ${treasures.length}`; ui.zone.textContent = zoneName();
     const totalMins = (playTime * .42 + 330) % 1440, hour = Math.floor(totalMins / 60), day = 1 + Math.floor((playTime * .42 + 330) / 1440);
     const period = hour < 7 ? 'Dawn' : hour < 12 ? 'Morning' : hour < 17 ? 'Afternoon' : hour < 20 ? 'Dusk' : 'Night';
@@ -398,9 +453,6 @@
       'Travel southeast to the <em>Ruins of the Fallen Sect</em> and defeat the Sectbreaker Golem.',
       'The fallen sect is reclaimed. Seek every secret and cultivate further.'
     ];
-    if (quest === 2 && player.herbs >= 3) quest = 3;
-    if (quest === 3 && player.realm > 0) quest = 4;
-    if (quest === 4 && openedCaches >= treasures.length) quest = 5;
     ui.questText.innerHTML = q[quest] || q[6];
     const nearbyChest = treasures.find(t => !t.opened && dist(player, t) < 58);
     const nearbyHerb = plants.find(p => p.ready && dist(player, p) < 42);
@@ -549,6 +601,104 @@
     if (flash > 0) { ctx.fillStyle = `rgba(240,220,144,${flash * .38})`; ctx.fillRect(0,0,W,H); }
   }
 
+  function updateDevStatus() {
+    if (!ui.devStatus) return;
+    ui.devStatus.textContent = [
+      `Tile: ${(player.x / TILE).toFixed(1)}, ${(player.y / TILE).toFixed(1)} | ${zoneName()}`,
+      `Realm: ${realms[player.realm].name} ${roman(player.stage)} | Quest: ${quest} / 6`,
+      `HP: ${Math.ceil(player.hp)} / ${player.maxHp} | Qi: ${Math.floor(player.qi)} / ${player.maxQi}`,
+      `Caches: ${openedCacheCount()} / ${treasures.length} | Boss defeated: ${bossDefeated}`,
+      `Dash cooldown: ${dashCooldownDuration().toFixed(3)}s | Invulnerable: ${dev.invulnerable} | No cooldowns: ${dev.noCooldowns}`
+    ].join('\n');
+  }
+
+  function openMenu(name) {
+    if (activeMenu === name) return;
+    if (activeMenu) closeMenu();
+    menuWasPaused = paused; paused = true; activeMenu = name;
+    keys.clear(); taps.clear();
+    const menu = name === 'settings' ? ui.settingsMenu : ui.devMenu;
+    menu.hidden = false;
+    if (name === 'dev') updateDevStatus();
+    const focusTarget = menu.querySelector('button');
+    if (focusTarget) focusTarget.focus();
+  }
+
+  function closeMenu() {
+    if (!activeMenu) return;
+    const menu = activeMenu === 'settings' ? ui.settingsMenu : ui.devMenu;
+    menu.hidden = true; activeMenu = null; paused = menuWasPaused;
+    ui.clearConfirm.hidden = true;
+    keys.clear(); taps.clear(); canvas.focus();
+  }
+
+  function safeTeleport(tx, ty) {
+    const baseX = clamp((tx + .5) * TILE, player.r, WORLD_W * TILE - player.r);
+    const baseY = clamp((ty + .5) * TILE, player.r, WORLD_H * TILE - player.r);
+    for (let radius = 0; radius <= 6; radius++) {
+      for (let oy = -radius; oy <= radius; oy++) for (let ox = -radius; ox <= radius; ox++) {
+        if (radius && Math.max(Math.abs(ox), Math.abs(oy)) !== radius) continue;
+        const x = clamp(baseX + ox * TILE, player.r, WORLD_W * TILE - player.r);
+        const y = clamp(baseY + oy * TILE, player.r, WORLD_H * TILE - player.r);
+        if (passableAt(x, y, player.r)) { player.x = x; player.y = y; player.meditating = false; return true; }
+      }
+    }
+    addMessage('No safe landing was found near that destination.', 'bad'); return false;
+  }
+
+  function setWorldMinute(minute) {
+    const elapsedMinutes = playTime * .42 + 330;
+    const dayStart = Math.floor(elapsedMinutes / 1440) * 1440;
+    let target = dayStart + minute;
+    if (target < 330) target += 1440;
+    playTime = Math.max(0, (target - 330) / .42);
+  }
+
+  const travelTargets = {
+    crossroads: [47, 39], 'vein-nw': [14, 13], 'vein-ne': [80, 13], 'vein-sw': [14, 58], 'vein-se': [81, 57],
+    grove: [18, 12], monastery: [77, 15], mere: [17, 56], grave: [47, 9], ruins: [78, 56]
+  };
+
+  function runDevAction(action) {
+    let persist = true, reconcile = true;
+    const boss = enemies.find(e => e.boss);
+    switch (action) {
+      case 'heal': player.hp = player.maxHp; break;
+      case 'refill-qi': player.qi = player.maxQi; break;
+      case 'add-herbs': player.herbs += 10; break;
+      case 'add-stones': player.stones += 25; break;
+      case 'add-xp': gainXp(player.xpNeed); break;
+      case 'advance-cultivation':
+        if (player.realm === realms.length - 1 && player.stage === realms[player.realm].stages) addMessage('Already at the current cultivation limit.');
+        else { player.qi = player.maxQi; breakthrough(); }
+        break;
+      case 'toggle-invulnerable': dev.invulnerable = !dev.invulnerable; persist = false; break;
+      case 'toggle-cooldowns': dev.noCooldowns = !dev.noCooldowns; persist = false; break;
+      case 'quest-prev': quest = Math.max(0, quest - 1); reconcile = false; break;
+      case 'quest-next': quest = Math.min(6, quest + 1); reconcile = false; break;
+      case 'reconcile': break;
+      case 'open-caches': treasures.forEach(t => { t.opened = true; }); break;
+      case 'reset-caches': treasures.forEach(t => { t.opened = false; }); reconcile = false; break;
+      case 'defeat-boss':
+        if (boss && boss.alive) killEnemy(boss);
+        else { bossDefeated = true; if (boss) boss.alive = false; }
+        break;
+      case 'respawn-boss':
+        bossDefeated = false;
+        if (boss) Object.assign(boss, { x: 78 * TILE, y: 56 * TILE, hp: boss.maxHp, alive: true, respawn: 99999 });
+        reconcile = false; break;
+      case 'dawn': setWorldMinute(360); break;
+      case 'noon': setWorldMinute(720); break;
+      case 'night': setWorldMinute(1260); break;
+      case 'save-now': save(); persist = false; break;
+      case 'reload-save': location.reload(); return;
+      default: persist = false;
+    }
+    if (reconcile) reconcileQuestProgress();
+    updateUI(); updateDevStatus();
+    if (persist) save();
+  }
+
   function frame(now) {
     const dt = Math.min(.05, (now - last) / 1000); last = now;
     try {
@@ -562,22 +712,55 @@
   }
 
   addEventListener('keydown', e => {
+    if (e.ctrlKey && e.shiftKey && e.altKey && e.code === 'KeyD') {
+      e.preventDefault(); e.stopPropagation();
+      if (activeMenu === 'dev') closeMenu(); else openMenu('dev');
+      return;
+    }
+    if (activeMenu) {
+      if (e.key === 'Escape') { e.preventDefault(); closeMenu(); }
+      return;
+    }
     const k = e.key.toLowerCase();
     if ([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(k)) e.preventDefault();
     if (!keys.has(k)) taps.add(k); keys.add(k);
     if (k === 'escape' && started) { paused = !paused; addMessage(paused ? 'The world waits.' : 'The journey continues.'); }
   });
   addEventListener('keyup', e => keys.delete(e.key.toLowerCase()));
-  addEventListener('blur', () => keys.clear());
+  addEventListener('blur', () => { keys.clear(); taps.clear(); });
   document.querySelectorAll('[data-key]').forEach(btn => {
     const k = btn.dataset.key;
     btn.addEventListener('pointerdown', e => { e.preventDefault(); if (!keys.has(k)) taps.add(k); keys.add(k); btn.setPointerCapture(e.pointerId); });
     btn.addEventListener('pointerup', e => { keys.delete(k); try { btn.releasePointerCapture(e.pointerId); } catch (_) {} });
     btn.addEventListener('pointercancel', () => keys.delete(k));
   });
+  ui.settingsButton.addEventListener('click', () => openMenu('settings'));
+  ui.closeSettings.addEventListener('click', closeMenu);
+  ui.closeDev.addEventListener('click', closeMenu);
+  ui.clearProgress.addEventListener('click', () => { ui.clearConfirm.hidden = false; ui.confirmClear.focus(); });
+  ui.cancelClear.addEventListener('click', () => { ui.clearConfirm.hidden = true; ui.clearProgress.focus(); });
+  ui.confirmClear.addEventListener('click', () => {
+    try {
+      suppressSave = true; localStorage.removeItem(SAVE_KEY); location.reload();
+    } catch (_) {
+      suppressSave = false; closeMenu(); addMessage('The save could not be deleted on this device.', 'bad');
+    }
+  });
+  ui.devMenu.addEventListener('click', e => {
+    const actionButton = e.target.closest('[data-dev-action]');
+    if (actionButton) { runDevAction(actionButton.dataset.devAction); return; }
+    const travelButton = e.target.closest('[data-dev-travel]');
+    if (!travelButton) return;
+    const target = travelTargets[travelButton.dataset.devTravel];
+    if (target && safeTeleport(target[0], target[1])) { updateUI(); updateDevStatus(); save(); }
+  });
   ui.start.addEventListener('click', () => { started = true; ui.overlay.hidden = true; canvas.focus(); addMessage('The Verdant Star stirs above the silent sect.', 'good'); updateUI(); });
-  addEventListener('beforeunload', save);
+  addEventListener('beforeunload', () => { if (!suppressSave) save(); });
 
-  load(); populate(); updateUI(); requestAnimationFrame(frame);
+  const hadSave = load();
+  populate();
+  const questRepaired = reconcileQuestProgress();
+  if (hadSave && (loadedSaveVersion < SAVE_VERSION || questRepaired)) save();
+  updateUI(); requestAnimationFrame(frame);
 })();
 
