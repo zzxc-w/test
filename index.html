@@ -86,6 +86,20 @@
     #quest h2 { margin: 0 0 3px; color: #f1d38d; font-size: .78rem; text-transform: uppercase; letter-spacing: .12em; }
     #quest p { margin: 0; color: #d3d8d0; font-size: .82rem; line-height: 1.35; }
     #quest em { color: var(--jade); font-style: normal; }
+    #compass {
+      position: absolute;
+      left: 50%;
+      top: 82px;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 6px 11px;
+      pointer-events: none;
+      color: #b8ead4;
+      font: .76rem/1 system-ui, sans-serif;
+    }
+    #compassArrow { display: inline-block; color: #7bf0bf; font-size: 1.15rem; text-shadow: 0 0 8px #5dffbd; }
     #messages {
       position: absolute;
       left: 14px;
@@ -165,6 +179,7 @@
       </section>
     </div>
     <aside id="quest" class="panel"><h2>Current insight</h2><p id="questText">Seek a spirit vein and gather qi.</p></aside>
+    <div id="compass" class="panel"><span id="compassArrow">â–²</span><span id="compassText">Spirit vein nearby</span></div>
     <div id="messages" aria-live="polite"></div>
     <div class="panel bottom-help"><kbd>WASD</kbd> Move &nbsp; <kbd>Space</kbd> Sword &nbsp; <kbd>Shift</kbd> Dash &nbsp; <kbd>C</kbd> Cultivate &nbsp; <kbd>E</kbd> Gather &nbsp; <kbd>Q</kbd> Talisman</div>
     <div id="touch" aria-label="Touch controls">
