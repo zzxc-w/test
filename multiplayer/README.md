@@ -42,7 +42,7 @@ It returns `{ "playerId", "ticket", "websocketUrl" }`. The ticket is URL-encoded
 - `presence`: `seq`, finite `x`/`y`, `facing`, `moving`, optional `emote`
 - `challenge_request`: `targetPlayerId`
 - `challenge_response`: `challengeId`, `accept`
-- `arena_input`: `arenaId`, `seq`, normalized `moveX`/`moveY` and `aimX`/`aimY`, plus boolean `attack`/`dash`/`parry`
+- `arena_input`: `arenaId`, `seq`, normalized `moveX`/`moveY` and `aimX`/`aimY`, plus edge-buffered boolean `attack`/`dash`/`parry`
 
 The server sends:
 
@@ -55,6 +55,6 @@ The server sends:
 - On the dedicated arena WebSocket: `arena_snapshot` with increasing `tick`, authoritative `players`, and `timeLeft`
 - On the dedicated arena WebSocket: `arena_end` with the authoritative outcome
 
-The world and arena use separate WebSockets. If the arena socket drops, the client retains its transient arena and reconnects directly with the arena ticket during the configured 20-second grace. The server treats the nonce as single-use except when the same disconnected session resumes that arena within the grace window. Clients never send damage, HP, cooldowns, winners, rewards, world loot, or cultivation state. The server must reject unknown fields/types, invalid versions, ticket use by another session and excessive message rates. Arena state is exposed only through `client.arena` and must not be included in the solo save.
+The world and arena use separate WebSockets. If the arena socket drops, the client retains its transient arena and reconnects directly with the arena ticket during the configured 20-second grace. A six-second snapshot watchdog and **Leave Realm** escape prevent a stalled connection from trapping the solo game. Finished rooms return a durable end payload to reconnecting clients. The server treats the nonce as single-use except when the same disconnected session resumes that arena within the grace window. Clients never send damage, HP, cooldowns, winners, rewards, world loot, or cultivation state. The server must reject unknown fields/types, invalid versions, ticket use by another session and excessive message rates. Arena state is exposed only through `client.arena` and must not be included in the solo save.
 
-The challenge sheet uses 48px controls, safe-area insets, `touch-action: manipulation`, disables Safari tap highlighting, includes countdowns, and offers an Ignore Challenges toggle. The arena overlay prevents page scrolling, is independent of the world canvas, and provides arena-local multitouch movement plus Attack, Parry and Dash controls. Controls release on pointer cancellation, focus loss and page hiding to prevent stuck iPad input. Pass `onInput(state)` to `mountArenaOverlay` to bridge input yourself, or omit it to send through `ArenaClient` directly.
+The challenge sheet uses 48px controls, safe-area insets, `touch-action: manipulation`, disables Safari tap highlighting, includes countdowns, and offers an Ignore Challenges toggle. The arena overlay prevents page scrolling, is independent of the world canvas, and provides arena-local multitouch movement plus Attack, Parry and Dash controls. Fast action taps are queued through the 30 Hz wire cap and consumed once by the authoritative simulation. Controls release on pointer cancellation, focus loss and page hiding to prevent stuck iPad input. Pass `onInput(state)` to `mountArenaOverlay` to bridge input yourself, or omit it to send through `ArenaClient` directly.

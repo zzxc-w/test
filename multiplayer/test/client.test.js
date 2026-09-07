@@ -18,10 +18,13 @@ function testPresence() {
   const store = new PresenceStore({ localPlayerId: "self", interpolationDelayMs: 100, staleAfterMs: 5000 });
   assert.equal(store.ingest({ id: "self", x: 0, y: 0 }, 1000), false);
   store.ingest({ id: "other", name: "Friend", x: 0, y: 0, serverTime: 900 }, 900);
-  store.ingest({ id: "other", name: "Friend", x: 10, y: 20, serverTime: 1100 }, 1100);
+  store.ingest({ id: "other", name: "Friend", x: 10, y: 20, serverTime: 1100, emote: "none", action: "attack" }, 1100);
   const player = store.getRenderable(1100)[0];
   assert.equal(player.x, 5);
   assert.equal(player.y, 10);
+  assert.equal(player.emote, null);
+  assert.equal(player.action, "attack");
+  assert.equal(store.getRenderable(1600)[0].action, "none", 'cosmetic actions must expire');
   assert.equal(store.nearby(0, 0, 12, 1100).length, 1);
   assert.equal(store.ingest({ id: "sequenced", x: 1, y: 1, seq: 2 }, 1100), true);
   assert.equal(store.ingest({ id: "sequenced", x: 9, y: 9, seq: 1 }, 1101), false);
@@ -59,6 +62,12 @@ function testArena() {
   assert.equal(sent[0].aimX, -1);
   assert.equal(sent[0].aimY, 0.25);
   assert(!("damage" in sent[0]));
+  now = 1;
+  assert.equal(arena.setInput({ attack: false }, true), false);
+  assert.equal(arena.setInput({ attack: true }, true), false);
+  now = 35;
+  assert(arena.setInput({ attack: false }, true));
+  assert.equal(sent[1].attack, true, 'a fast action press must remain queued through input throttling');
   assert(arena.receiveSnapshot({ arenaId: "a1", tick: 2, players: [] }));
   assert(!arena.receiveSnapshot({ arenaId: "a1", tick: 1, players: [] }));
   arena.end({ winnerId: "p1" });
@@ -98,8 +107,9 @@ async function testClient() {
   assert(socket.url.endsWith("ticket=a%2Bb"));
   socket.open();
   assert.equal(client.status, "online");
-  assert(client.updatePresence({ x: 2, y: 3, facing: "left" }));
+  assert(client.updatePresence({ x: 2, y: 3, facing: "left", action: "parry" }));
   assert.equal(socket.sent[0].type, "presence");
+  assert.equal(socket.sent[0].action, "parry");
   assert.equal(client.updatePresence({ x: 3, y: 4 }), false);
   now += 201;
   assert(client.updatePresence({ x: 3, y: 4 }));
@@ -117,6 +127,8 @@ async function testClient() {
   assert.equal(socket.sent.some((message) => message.type === "arena_input"), false);
   arenaSocket.message({ type: "arena_snapshot", arenaId: "a1", tick: 3, players: [] });
   assert.equal(client.arena.snapshot.tick, 3);
+  arenaSocket.message({ type: "arena_snapshot", arenaId: "a1", tick: 4, status: "finished", winnerId: "p1", players: [] });
+  assert.equal(client.arena.active, false, 'a final snapshot must resume the world even without arena_end');
   assert.equal(client.handleMessage("not json"), false);
   assert.equal(client.handleMessage(JSON.stringify({ type: "client_invented_damage", damage: 9999 })), false);
   client.disconnect();
@@ -127,8 +139,25 @@ async function testClient() {
   assert.equal(disabled.status, "offline");
 }
 
+async function testArenaWatchdog() {
+  let now = 1000, scheduled = null;
+  const timer = { setTimeout(fn) { scheduled = fn; return 1; }, clearTimeout() { scheduled = null; } };
+  const client = new MultiplayerClient({
+    config: { enabled: true, apiBase: "https://worker.example" }, WebSocket: FakeSocket, now: () => now, timer,
+    fetch: async () => ({ ok: true, json: async () => ({ playerId: "p1", ticket: "world", websocketUrl: "wss://worker.example/world" }) })
+  });
+  await client.connect({ name: "Watchful Sage" });
+  const world = FakeSocket.instances.pop(); world.open();
+  world.message({ type: "arena_start", arenaId: "stalled", playerId: "p1", ticket: "arena", websocketUrl: "wss://worker.example/arena" });
+  const arenaSocket = FakeSocket.instances.pop(); arenaSocket.open();
+  assert.equal(client.arena.active, true);
+  now = 8000; const watchdog = scheduled; scheduled = null; watchdog();
+  assert.equal(client.arena.active, false, 'a stalled open socket must not trap the solo game');
+  client.disconnect();
+}
+
 async function main() {
-  testConfig(); testPresence(); testChallenges(); testArena(); await testClient();
+  testConfig(); testPresence(); testChallenges(); testArena(); await testClient(); await testArenaWatchdog();
   console.log("multiplayer browser client tests passed");
 }
 

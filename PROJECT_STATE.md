@@ -8,13 +8,13 @@ _Last updated: 2026-09-07. Treat this as a continuity summary, not a substitute 
 
 The project is a dependency-free static site:
 
-- `index.html` contains the page structure, CSS, HUD, start overlay, settings/dev dialogs, responsive touch controls, multiplayer status/panel shell, and a fixed 960x540 canvas. It loads the dependency-free multiplayer modules before `game.js?v=9`.
+- `index.html` contains the page structure, CSS, HUD, permanent-name setup, settings/dev dialogs, responsive touch controls, multiplayer status/panel shell, and a fixed 960x540 canvas. It loads the dependency-free multiplayer modules before `game.js?v=10`.
 - `game.js` is a single IIFE containing game data, deterministic world generation, input, update/render loops, combat, exploration, progression, quests, and save/load logic.
 - `multiplayer/` is an optional dependency-free browser client for presence, challenges, and isolated arena play.
 - `server/` is a Cloudflare Worker using SQLite Durable Objects for the shared world and server-authoritative duel rooms.
 - Graphics are drawn procedurally with Canvas 2D; smoothing is disabled for a pixel-art look.
 - There is no framework, package manager, build step, backend, account system, or asset pipeline.
-- Saves are device-local in `localStorage` under `verdant-star-save`; the current schema is version 6.
+- Saves are device-local in `localStorage` under `verdant-star-save`; the current schema is version 7.
 
 ## Implemented
 
@@ -42,6 +42,7 @@ The project is a dependency-free static site:
 - Version 4 reconciles durable quest facts (kills, herbs, realm, caches, and boss state) in order. Boss defeat never bypasses unfinished cache requirements, and old saves with an already-defeated boss can complete once prerequisites are met.
 - Version 5 migrates the old quest into two tutorial flags, adds stable boss state, regional ingredients, and key items, and grants the Sectbreaker Core to any save that had already defeated the old boss.
 - Version 6 stores discoveries by stable area/landmark IDs and preserves name-based discoveries through migration.
+- Version 7 stores one validated 1–20 character cultivator name in the main save. Unnamed legacy saves receive one choice on the title screen; the name is locked until progress is cleared.
 - Cultivation belongs near the green spirit veins, not at shrines or the sword-grave/cross landmark.
 - Preserve all legacy world coordinates when expanding the map. Append areas/caches instead of reordering them so old positions and cache-save indices remain valid.
 - Boss strength is fixed rather than player-scaled. Unique boss keys are durable proof of victory and are checked, not consumed, during realm breakthroughs.
@@ -71,12 +72,15 @@ The project is a dependency-free static site:
 - Replaced post-tutorial objectives with self-directed exploration; the settings inventory shows materials, keys, and next breakthrough requirements.
 - Fixed canvas-state and transparent-hole artifacts, added stable minimap discovery markers and safe developer travel entrances, and added a touch-friendly Menu hold shortcut for the developer chamber.
 - Multiplayer requires a separate real-time authority. `MULTIPLAYER.md` records the agreed safe boundary: shared social presence first, normalized server-authoritative arena duels, local PvE/progression retained until server-side accounts exist.
+- Rebuilt arena presentation around pixel cultivators, HP/cooldown HUD, combat telegraphs, touch-safe edge-buffered actions, hit/parry/dash feedback, knockback, body separation, reliable final-state delivery, an explicit leave control, and a stalled-snapshot watchdog.
+- Replaced generated multiplayer aliases with a permanent per-save name chosen once on the title screen; resetting progress removes the legacy alias and returns to name creation.
+- Shared-world players now render as colored pixel cultivators with swords and transient attack, parry, and dash animations instead of cyan rectangles.
 
 ## Current state and known issues
 
 - Multiplayer v1 is live on GitHub Pages: cosmetic shared-world presence, proximity challenges, a separate normalized server-authoritative arena, reconnect handling, and iPad arena controls. Staging and production Workers are deployed, and `index.html` uses the production endpoint.
 - Multiplayer and arena state is deliberately excluded from `verdant-star-save`; the solo simulation pauses during a duel and remains the fail-open fallback.
-- Browser-client tests, 17 Worker protocol/simulation/security tests, the original smoke suite, and browser integration checks pass. Automated live tests passed against staging and production for health, two-client presence, challenge acceptance, isolated arena admission/input, and reconnect; a two-tab production Pages check also passed through arena entry and touch-control rendering.
+- Browser-client tests, 26 Worker protocol/simulation/security/lifecycle tests, the original smoke suite, and browser integration checks pass. Automated live tests passed against staging and production for health, two-client presence, challenge acceptance, isolated arena admission/input, and reconnect; a two-tab local staging check passed permanent naming, named challenges, redesigned arena entry/rendering, and immediate return through Leave Realm.
 - CI performs JavaScript syntax validation and dependency-free migration, progression, combat, dash, reset, and touch-state smoke tests, but still lacks full real-browser interaction coverage. Test desktop and touch behavior manually after major UI or input changes.
 - `game.js` and the inline CSS are monolithic. Concurrent broad edits are likely to conflict; use small branches/PRs and avoid assigning two people overlapping sections of `game.js`.
 - `main` was unprotected at the last check. `hydrogendesigns` currently resolves to read access, which likely means the collaborator invitation has not yet been accepted.

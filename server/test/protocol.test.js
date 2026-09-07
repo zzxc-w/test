@@ -17,11 +17,20 @@ test('display names are short and safe', () => {
 
 test('presence enforces map bounds, sequence and strict fields', () => {
   const valid = { type: 'presence', seq: 4, x: 100, y: 200, facing: 'left', moving: true, emote: 'bow' };
-  assert.deepEqual(validatePresence(valid), { seq: 4, x: 100, y: 200, facing: 'left', moving: true, emote: 'bow' });
+  assert.deepEqual(validatePresence(valid), { seq: 4, x: 100, y: 200, facing: 'left', moving: true, emote: 'bow', action: 'none' });
   assert.equal(validatePresence({ ...valid, x: -1 }), null);
   assert.ok(validatePresence({ ...valid, x: 144 * 24, y: 108 * 24 }));
   assert.equal(validatePresence({ ...valid, x: 144 * 24 + 1 }), null);
   assert.equal(validatePresence({ ...valid, hp: 999 }), null);
+});
+
+test('presence accepts only the allowlisted cosmetic combat actions', () => {
+  const base = { type: 'presence', seq: 1, x: 100, y: 100, facing: 'east', moving: false };
+  for (const action of ['none', 'attack', 'parry', 'dash']) {
+    assert.equal(validatePresence({ ...base, action }).action, action);
+  }
+  assert.equal(validatePresence({ ...base, action: 'admin-strike' }).action, 'none');
+  assert.equal(validatePresence({ ...base, action: { attack: true } }).action, 'none');
 });
 
 test('challenge and arena input match the browser contract', () => {

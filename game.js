@@ -9,7 +9,7 @@
   const WORLD_W = 144, WORLD_H = 108;
   const TAU = Math.PI * 2;
   const SAVE_KEY = 'verdant-star-save';
-  const SAVE_VERSION = 6;
+  const SAVE_VERSION = 7;
   const DASH_DISTANCE = 84;
   const DASH_BASE_COOLDOWN = .72;
   const DASH_MIN_COOLDOWN = .36;
@@ -23,10 +23,10 @@
     return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
   };
 
-  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','caches','zone','time','quest','questText','messages','overlay','start','compass','compassArrow','compassText','interactPrompt','settingsButton','multiplayerButton','settingsMenu','closeSettings','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText'].map(id => [id, document.getElementById(id)]));
+  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','caches','zone','time','quest','questText','messages','overlay','start','compass','compassArrow','compassText','interactPrompt','settingsButton','multiplayerButton','settingsMenu','closeSettings','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText','playerNameLabel','nameSetup','playerNameInput','nameError','returningName'].map(id => [id, document.getElementById(id)]));
   const keys = new Set(), taps = new Set(), keyboardKeys = new Set(), touchPointers = new Map(), touchKeyCounts = new Map();
   let started = false, paused = false, last = performance.now(), playTime = 0, shake = 0, flash = 0, runtimeErrorShown = false, mapOpen = false;
-  let activeMenu = null, menuWasPaused = false, suppressSave = false, loadedSaveVersion = 0;
+  let activeMenu = null, menuWasPaused = false, suppressSave = false, loadedSaveVersion = 0, playerName = '';
   const dev = { invulnerable: false, noCooldowns: false };
   const multiplayerApi = globalThis.VerdantMultiplayer || null;
   let multiplayer = null, multiplayerPanel = null, arenaOverlay = null, multiplayerPanelOpen = false;
@@ -226,18 +226,28 @@
     ui.messages.innerHTML = messages.map(m => `<div class="msg ${m.type === 'good' || m.type === 'bad' ? m.type : ''}">${escaped(m.text)}</div>`).join('');
   }
 
-  function multiplayerName() {
-    try {
-      const existing = localStorage.getItem('verdant-star-multiplayer-name');
-      if (existing) return existing;
-      const name = `Cultivator ${Math.floor(1000 + Math.random() * 9000)}`;
-      localStorage.setItem('verdant-star-multiplayer-name', name);
-      return name;
-    } catch (_) { return `Cultivator ${Math.floor(1000 + Math.random() * 9000)}`; }
+  function cleanPlayerName(value) {
+    const name = typeof value === 'string' ? value.trim().replace(/\s+/g, ' ') : '';
+    return /^[\p{L}\p{N} _.-]{1,20}$/u.test(name) ? name : '';
+  }
+
+  function configureNameSetup() {
+    const named = Boolean(playerName);
+    ui.nameSetup.hidden = named;
+    ui.returningName.hidden = !named;
+    ui.returningName.textContent = named ? `Returning as ${playerName}` : '';
+    ui.playerNameLabel.textContent = named ? playerName : 'Wandering Disciple';
+    if (named) ui.playerNameInput.value = playerName;
   }
 
   function nearbyCultivators() {
     return multiplayer ? multiplayer.presence.nearby(player.x, player.y, 360, Date.now()) : [];
+  }
+
+  function sendWorldPresence(action = 'none', force = false) {
+    if (!multiplayer || multiplayer.arena.active) return false;
+    const moving = keys.has('w') || keys.has('a') || keys.has('s') || keys.has('d') || keys.has('arrowup') || keys.has('arrowdown') || keys.has('arrowleft') || keys.has('arrowright');
+    return multiplayer.updatePresence({ x: player.x, y: player.y, facing: player.facing.toFixed(3), moving, action }, force);
   }
 
   function updateMultiplayerStatus() {
@@ -279,6 +289,8 @@
     multiplayer.subscribe((event, detail) => {
       if (event === 'status') updateMultiplayerStatus();
       if (event === 'online') addMessage('Joined the shared cultivation world.', 'good');
+      if (event === 'arena_online') arenaOverlay?.setConnectionState?.('online');
+      if (event === 'arena_reconnecting') arenaOverlay?.setConnectionState?.('reconnecting');
     });
     multiplayer.challenges.subscribe((event, detail) => {
       if (event === 'offer') { setMultiplayerPanel(true); addMessage(`${detail.fromName} requests an arena duel.`, 'good'); }
@@ -294,7 +306,7 @@
       }
     });
     updateMultiplayerStatus();
-    multiplayer.connect({ name: multiplayerName() });
+    multiplayer.connect({ name: playerName || 'Wandering Cultivator' });
   }
 
   function submitArenaInput() {
@@ -370,6 +382,7 @@
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         version: SAVE_VERSION,
+        name: playerName,
         x: player.x, y: player.y, hp: player.hp, qi: player.qi, maxQi: player.maxQi, maxHp: player.maxHp,
         xp: player.xp, xpNeed: player.xpNeed, realm: player.realm, stage: player.stage, stones: player.stones,
         herbs: player.herbs, kills: player.kills, attack: player.attack, quest, playTime,
@@ -386,6 +399,7 @@
       const d = JSON.parse(localStorage.getItem(SAVE_KEY));
       if (!d) return false;
       loadedSaveVersion = Number.isFinite(d.version) ? Math.floor(d.version) : 0;
+      playerName = cleanPlayerName(d.name);
       for (const k of ['x','y','hp','qi','maxQi','maxHp','xp','xpNeed','realm','stage','stones','herbs','kills','attack']) if (Number.isFinite(d[k])) player[k] = d[k];
       quest = Number.isFinite(d.quest) ? d.quest : 0;
       playTime = Number.isFinite(d.playTime) ? d.playTime : 0;
@@ -539,11 +553,13 @@
     if (player.parryCd > 0 || player.meditating || player.parryRecovery > 0 || player.attackTimer > 0) return;
     player.parryTimer = .2; player.parryCd = .55; player.parryRecovery = .38;
     burst(player.x + Math.cos(player.facing) * 16, player.y + Math.sin(player.facing) * 16, '#fff1aa', 9, 70);
+    sendWorldPresence('parry', true);
   }
 
   function attack() {
     if (player.attackCd > 0 || player.meditating || player.parryRecovery > 0 || player.parryTimer > 0) return;
     player.attackCd = .34; player.attackTimer = .15;
+    sendWorldPresence('attack', true);
     if (!tutorial.attacked) { tutorial.attacked = true; save(); }
     const reach = 38, ax = player.x + Math.cos(player.facing) * 20, ay = player.y + Math.sin(player.facing) * 20;
     slashes.push({ x: player.x, y: player.y, a: player.facing, life: .18 });
@@ -627,6 +643,7 @@
       player.x = nx; player.y = ny; break;
     }
     player.dashCd = dashCooldownDuration(); player.invuln = .48;
+    sendWorldPresence('dash', true);
     for (let i = 0; i < 10; i++) particles.push({ x: lerp(fromX, player.x, i / 9), y: lerp(fromY, player.y, i / 9), vx: 0, vy: 0, life: .25 + i * .015, max: .4, color: '#baf5dc', size: 5 });
   }
 
@@ -794,8 +811,7 @@
     if (reconcileQuestProgress()) save();
     if (Math.floor(playTime) % 12 === 0 && Math.floor((playTime - dt)) % 12 !== 0) save();
     if (multiplayer) {
-      const moving = keys.has('w') || keys.has('a') || keys.has('s') || keys.has('d') || keys.has('arrowup') || keys.has('arrowdown') || keys.has('arrowleft') || keys.has('arrowright');
-      if (multiplayer.updatePresence({ x: player.x, y: player.y, facing: player.facing.toFixed(3), moving })) updateMultiplayerStatus();
+      if (sendWorldPresence()) updateMultiplayerStatus();
     }
     updateUI();
   }
@@ -1033,7 +1049,7 @@
     plants.forEach(p => drawPlant(p, cam, time));
     resourceNodes.forEach(node => drawResourceNode(node, cam, time));
     pickups.forEach(p => { const s = screenPos(p.x, p.y, cam), b = Math.sin(time * 5 + p.bob) * 3; ctx.fillStyle = '#07110eaa'; ctx.fillRect(s.x - 6, s.y + 6, 12, 3); ctx.fillStyle = '#79e1b7'; ctx.fillRect(s.x - 4, s.y - 5 + b, 8, 9); ctx.fillStyle = '#c8ffe9'; ctx.fillRect(s.x - 1, s.y - 3 + b, 3, 4); });
-    if (multiplayer && !multiplayer.arena.active) multiplayerApi.drawRemotePlayers(ctx, multiplayer.presence.getRenderable(Date.now()), { camera: cam });
+    if (multiplayer && !multiplayer.arena.active) multiplayerApi.drawRemotePlayers(ctx, multiplayer.presence.getRenderable(Date.now()), { camera: cam, now: Date.now() });
     enemies.slice().sort((a,b)=>a.y-b.y).forEach(e => drawEnemy(e, cam, time));
     drawPlayer(cam);
     slashes.forEach(slash => { const p = screenPos(slash.x, slash.y, cam); ctx.strokeStyle = `rgba(255,230,167,${slash.life / .18})`; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(p.x, p.y, 31, slash.a - .8, slash.a + .8); ctx.stroke(); });
@@ -1234,7 +1250,7 @@
     if (!document.hidden) return;
     releaseAllInputs();
     if (multiplayer?.arena.active) multiplayer.arena.setInput({ moveX: 0, moveY: 0, aimX: 1, aimY: 0, attack: false, parry: false, dash: false }, true);
-    else multiplayer?.updatePresence({ x: player.x, y: player.y, facing: player.facing.toFixed(3), moving: false }, true);
+    else multiplayer?.updatePresence({ x: player.x, y: player.y, facing: player.facing.toFixed(3), moving: false, action: 'none' }, true);
   });
   document.querySelectorAll('[data-key]').forEach(btn => {
     const k = btn.dataset.key;
@@ -1275,9 +1291,14 @@
   ui.closeDev.addEventListener('click', closeMenu);
   ui.clearProgress.addEventListener('click', () => { ui.clearConfirm.hidden = false; ui.confirmClear.focus(); });
   ui.cancelClear.addEventListener('click', () => { ui.clearConfirm.hidden = true; ui.clearProgress.focus(); });
+  ui.playerNameInput.addEventListener('input', () => { ui.nameError.textContent = ''; });
+  ui.playerNameInput.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); ui.start.click(); }
+  });
   ui.confirmClear.addEventListener('click', () => {
     try {
-      suppressSave = true; localStorage.removeItem(SAVE_KEY); location.reload();
+      suppressSave = true; localStorage.removeItem(SAVE_KEY); localStorage.removeItem('verdant-star-multiplayer-name'); location.reload();
     } catch (_) {
       suppressSave = false; closeMenu(); addMessage('The save could not be deleted on this device.', 'bad');
     }
@@ -1290,12 +1311,19 @@
     const target = travelTargets[travelButton.dataset.devTravel];
     if (target && safeTeleport(target[0], target[1])) { player.invuln = Math.max(player.invuln, 2); updateUI(); updateDevStatus(); save(); }
   });
-  ui.start.addEventListener('click', () => { started = true; ui.overlay.hidden = true; canvas.focus(); addMessage('The Verdant Star stirs above the silent sect.', 'good'); updateUI(); initMultiplayer(); });
+  ui.start.addEventListener('click', () => {
+    if (!playerName) {
+      const chosen = cleanPlayerName(ui.playerNameInput.value);
+      if (!chosen) { ui.nameError.textContent = 'Use 1–20 letters, numbers, spaces, dots, dashes, or underscores.'; ui.playerNameInput.focus(); return; }
+      playerName = chosen; ui.nameError.textContent = ''; configureNameSetup(); save();
+    }
+    started = true; ui.overlay.hidden = true; canvas.focus(); addMessage('The Verdant Star stirs above the silent sect.', 'good'); updateUI(); initMultiplayer();
+  });
   addEventListener('beforeunload', () => { if (!suppressSave) save(); });
 
   const hadSave = load();
   populate();
   const questRepaired = reconcileQuestProgress();
   if (hadSave && (loadedSaveVersion < SAVE_VERSION || questRepaired)) save();
-  updateUI(); requestAnimationFrame(frame);
+  configureNameSetup(); updateUI(); requestAnimationFrame(frame);
 })();

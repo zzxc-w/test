@@ -46,6 +46,7 @@ export class WorldRoom {
       y: Number.isFinite(prior.y) ? prior.y : LIMITS.worldHeight / 2,
       facing: Number.isFinite(prior.facing) ? prior.facing : 0,
       emote: 'none',
+      action: 'none',
       seq: Number.isSafeInteger(prior.seq) ? prior.seq : -1,
       lastPresenceAt: Date.now(),
     };
@@ -148,7 +149,13 @@ export class WorldRoom {
     await arena.fetch('https://internal/configure', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-internal-arena-key': this.env.SESSION_SIGNING_KEY },
-      body: JSON.stringify({ arenaId, playerIds: ids, rulesetVersion: this.env.RULESET_VERSION }),
+      body: JSON.stringify({
+        arenaId, playerIds: ids, rulesetVersion: this.env.RULESET_VERSION,
+        players: [challengerSocket, challengedSocket].map((socket) => {
+          const player = socket.deserializeAttachment();
+          return { id: player.id, name: player.name };
+        }),
+      }),
     });
     const expires = Date.now() + LIMITS.arenaTicketLifetimeMs;
     for (const [socket, playerId] of [[challengerSocket, ids[0]], [challengedSocket, ids[1]]]) {
@@ -246,7 +253,10 @@ export class WorldRoom {
 }
 
 function publicPlayer(player) {
-  return { id: player.id, name: player.name, x: player.x, y: player.y, facing: player.facing, emote: player.emote, seq: player.seq };
+  return {
+    id: player.id, name: player.name, x: player.x, y: player.y,
+    facing: player.facing, emote: player.emote, action: player.action || 'none', seq: player.seq,
+  };
 }
 
 export function withinChallengeRange(a, b) {

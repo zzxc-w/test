@@ -26,6 +26,7 @@
       this.arenaConnection = null;
       this.arenaDisconnectedAt = null;
       this.arenaReconnectAttempt = 0;
+      this.arenaWatchdogTimer = null;
       this.session = null;
       this.closedByUser = false;
       this.reconnectAttempt = 0;
@@ -35,6 +36,7 @@
       this.presence = new mp.PresenceStore();
       this.challenges = new mp.ChallengeController({ send: (message) => this.send(message), timeoutMs: this.config.challengeTimeoutMs, now: this.now });
       this.arena = new mp.ArenaClient({ send: (message) => this.sendArena(message), now: this.now });
+      this.arena.leave = () => this.leaveArena();
     }
 
     subscribe(listener) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
@@ -124,26 +126,28 @@
         this.arenaDisconnectedAt = null;
         this.arenaReconnectAttempt = 0;
         this.emit("arena_online", { arenaId: this.arena.arenaId, resumed: Boolean(reconnecting) });
+        this.armArenaWatchdog();
       };
       socket.onmessage = (event) => {
         if (socket !== this.arenaSocket || typeof event.data !== "string" || event.data.length > this.config.maxMessageBytes) return;
         let packet;
         try { packet = JSON.parse(event.data); } catch (_) { return; }
-        if (packet.type === "arena_snapshot") this.arena.receiveSnapshot(packet);
-        else if (packet.type === "arena_end") {
-          this.arena.end(packet); this.arenaConnection = null; this.arenaDisconnectedAt = null;
-          this.arenaSocket = null; socket.onclose = null; socket.close();
-        }
+        if (packet.type === "arena_snapshot") {
+          if (this.arena.receiveSnapshot(packet)) this.armArenaWatchdog();
+          if (packet.status === "finished" || packet.winnerId) this.finishArena(packet);
+        } else if (packet.type === "arena_end") this.finishArena(packet);
       };
+      socket.onerror = () => this.emit("arena_reconnecting", { arenaId: this.arena.arenaId, graceMs: this.config.reconnectGraceMs });
       socket.onclose = () => {
         if (socket !== this.arenaSocket) return;
         this.arenaSocket = null;
+        this.clearArenaWatchdog();
         if (this.arenaDisconnectedAt == null) this.arenaDisconnectedAt = this.now();
         this.emit("arena_reconnecting", { arenaId: this.arena.arenaId, graceMs: this.config.reconnectGraceMs });
         const elapsed = this.now() - this.arenaDisconnectedAt;
         const remaining = this.config.reconnectGraceMs - elapsed;
         if (remaining <= 0) {
-          this.arena.end({ reason: "connection-lost" }); this.arenaConnection = null; return;
+          this.finishArena({ reason: "connection-lost" }); return;
         }
         const baseDelay = Math.min(4000, 500 * Math.pow(2, this.arenaReconnectAttempt++));
         const retryDelay = Math.min(remaining, Math.round(baseDelay * (0.8 + this.random() * 0.4)));
@@ -152,6 +156,37 @@
           if (this.arena.active && !this.arenaSocket && this.arenaConnection) this.openArenaSocket(this.arenaConnection, true);
         }, retryDelay);
       };
+      return true;
+    }
+
+    clearArenaWatchdog() {
+      if (this.arenaWatchdogTimer) this.timer.clearTimeout(this.arenaWatchdogTimer);
+      this.arenaWatchdogTimer = null;
+    }
+
+    armArenaWatchdog() {
+      this.clearArenaWatchdog();
+      if (!this.arena.active) return;
+      this.arenaWatchdogTimer = this.timer.setTimeout(() => {
+        this.arenaWatchdogTimer = null;
+        if (!this.arena.active) return;
+        const staleFor = this.now() - Number(this.arena.snapshotReceivedAt || 0);
+        if (staleFor < 6000) { this.armArenaWatchdog(); return; }
+        this.finishArena({ reason: "connection-stalled" });
+      }, 6500);
+    }
+
+    finishArena(result) {
+      this.clearArenaWatchdog();
+      if (this.arenaGraceTimer) this.timer.clearTimeout(this.arenaGraceTimer);
+      this.arenaGraceTimer = null; this.arenaConnection = null; this.arenaDisconnectedAt = null; this.arenaReconnectAttempt = 0;
+      if (this.arenaSocket) { const socket = this.arenaSocket; this.arenaSocket = null; socket.onclose = null; socket.close(1000, "arena-finished"); }
+      this.arena.end(result || {});
+    }
+
+    leaveArena() {
+      if (!this.arena.active) return false;
+      this.finishArena({ reason: "left" });
       return true;
     }
 
@@ -185,6 +220,7 @@
       };
       if (!Number.isFinite(message.x) || !Number.isFinite(message.y)) return false;
       if (state.emote != null) message.emote = String(state.emote).slice(0, 16);
+      message.action = ["attack", "parry", "dash"].includes(state.action) ? state.action : "none";
       if (!this.send(message)) return false;
       this.lastPresenceAt = now;
       return true;
@@ -205,6 +241,7 @@
       if (this.arenaSocket) { const socket = this.arenaSocket; this.arenaSocket = null; socket.close(1000, "client-close"); }
       if (this.arenaGraceTimer) this.timer.clearTimeout(this.arenaGraceTimer);
       this.arenaGraceTimer = null;
+      this.clearArenaWatchdog();
       this.arenaConnection = null;
       this.arenaDisconnectedAt = null;
       this.arenaReconnectAttempt = 0;
