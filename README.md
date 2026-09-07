@@ -13,6 +13,9 @@ A pixel-styled top-down cultivation adventure that runs directly in a browser.
 - **C:** cultivate inside a green spirit-vein beacon; when qi is full, attempt a material-gated breakthrough
 - **E:** gather herbs, regional ingredients, or open a gold ancient cache
 - **Q:** cast sword seal (costs 20 qi)
+- **M:** expand or close the world map
+
+Developer test chamber: press **Ctrl + Shift + Alt + D** on a hardware keyboard, or press and hold **Menu** for about two seconds on touch devices.
 
 After the short combat/cultivation tutorial, exploration is self-directed. Regional materials and unique boss drops unlock later cultivation stages. Progress is saved in the browser automatically.
 
