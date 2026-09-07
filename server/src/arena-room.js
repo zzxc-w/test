@@ -1,6 +1,6 @@
 import { ARENA, LIMITS } from './constants.js';
 import { applyArenaInput, createArenaState, finishArena, publicArenaSnapshot, stepArena } from './arena-sim.js';
-import { safeJson, socketSend, validateArenaInput } from './protocol.js';
+import { cleanDisplayName, safeJson, socketSend, validateArenaInput } from './protocol.js';
 import { TokenBucket } from './rate-limit.js';
 
 export class ArenaRoom {
@@ -13,6 +13,7 @@ export class ArenaRoom {
     this.tickHandle = null;
     this.lastSnapshotAt = 0;
     this.endAnnounced = false;
+    this.tickInFlight = false;
   }
 
   async fetch(request) {
@@ -53,6 +54,9 @@ export class ArenaRoom {
       you: playerId,
       ...publicArenaSnapshot(this.sim),
     });
+    if (this.sim.endedAt != null || this.sim.winnerId) {
+      socketSend(server, this.endPayload(Date.now()));
+    }
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -65,22 +69,46 @@ export class ArenaRoom {
     }
     const existing = await this.state.storage.get('config');
     if (existing && (existing.arenaId !== body.arenaId || existing.playerIds.join() !== body.playerIds.join())) return new Response('Already configured', { status: 409 });
-    this.config = { arenaId: body.arenaId, playerIds: [...body.playerIds], rulesetVersion: body.rulesetVersion };
-    this.sim = createArenaState(this.config.playerIds);
+    if (existing) {
+      this.config = existing;
+      this.sim = (await this.state.storage.get('sim')) || createArenaState(existing.playerIds, Date.now(), existing.playerNames);
+      return new Response(null, { status: 204 });
+    }
+    const playerNames = {};
+    if (body.players !== undefined) {
+      if (!Array.isArray(body.players) || body.players.length !== 2 || new Set(body.players.map((player) => player?.id)).size !== 2) {
+        return new Response('Invalid player profiles', { status: 400 });
+      }
+      for (const player of body.players) {
+        if (!player || Object.keys(player).some((key) => key !== 'id' && key !== 'name') || !body.playerIds.includes(player.id)) {
+          return new Response('Invalid player profile', { status: 400 });
+        }
+        const name = cleanDisplayName(player.name);
+        if (!name) return new Response('Invalid player profile', { status: 400 });
+        playerNames[player.id] = name;
+      }
+    }
+    this.config = { arenaId: body.arenaId, playerIds: [...body.playerIds], playerNames, rulesetVersion: body.rulesetVersion };
+    this.sim = createArenaState(this.config.playerIds, Date.now(), playerNames);
     await this.state.storage.put({ config: this.config, sim: this.sim });
     return new Response(null, { status: 204 });
   }
 
   async ensureLoaded() {
     if (!this.config) this.config = await this.state.storage.get('config');
-    if (!this.sim) this.sim = (await this.state.storage.get('sim')) || (this.config ? createArenaState(this.config.playerIds) : null);
+    if (!this.sim) this.sim = (await this.state.storage.get('sim')) || (this.config ? createArenaState(this.config.playerIds, Date.now(), this.config.playerNames) : null);
   }
 
-  webSocketMessage(socket, data) {
+  async webSocketMessage(socket, data) {
+    await this.ensureLoaded();
+    if (!this.sim || !this.config || this.sim.endedAt != null || this.sim.winnerId) return;
+    this.startTicking();
     if (typeof data !== 'string') return this.strike(socket, 'Binary message');
     const limits = this.rateLimits.get(socket) || { inputs: new TokenBucket(50, 35), strikes: 0 };
     this.rateLimits.set(socket, limits);
-    if (!limits.inputs.take()) return this.strike(socket, 'Rate limit exceeded');
+    // Input is disposable state. Dropping excess packets protects the room without
+    // disconnecting high-refresh-rate browsers and leaving their arena UI stranded.
+    if (!limits.inputs.take()) return;
     const message = safeJson(data);
     const input = validateArenaInput(message);
     const { playerId } = socket.deserializeAttachment() || {};
@@ -104,8 +132,12 @@ export class ArenaRoom {
   }
 
   startTicking() {
-    if (this.tickHandle || this.sim?.winnerId) return;
-    this.tickHandle = setInterval(() => this.tick(), ARENA.tickMs);
+    if (this.tickHandle || this.sim?.endedAt != null || this.sim?.winnerId) return;
+    this.tickHandle = setInterval(() => {
+      if (this.tickInFlight) return;
+      this.tickInFlight = true;
+      Promise.resolve(this.tick()).catch((error) => this.handleTickFailure(error)).finally(() => { this.tickInFlight = false; });
+    }, ARENA.tickMs);
   }
 
   async tick() {
@@ -126,7 +158,7 @@ export class ArenaRoom {
     }
     if (this.sim.winnerId && !this.endAnnounced) {
       this.endAnnounced = true;
-      this.broadcast({ type: 'arena_end', arenaId: this.config.arenaId, winnerId: this.sim.winnerId, reason: this.sim.reason, serverTime: now });
+      this.broadcast(this.endPayload(now));
       await this.state.storage.put('sim', this.sim);
       clearInterval(this.tickHandle);
       this.tickHandle = null;
@@ -146,6 +178,27 @@ export class ArenaRoom {
 
   broadcast(payload) {
     for (const socket of this.state.getWebSockets()) if (socket.readyState === 1) socketSend(socket, payload);
+  }
+
+  endPayload(now = Date.now()) {
+    return {
+      type: 'arena_end', arenaId: this.config.arenaId,
+      winnerId: this.sim.winnerId, reason: this.sim.reason,
+      endedAt: this.sim.endedAt || now, serverTime: now,
+    };
+  }
+
+  async handleTickFailure(error) {
+    console.error('Arena tick failed', error);
+    if (!this.sim || this.sim.endedAt != null || this.sim.winnerId) return;
+    this.sim.updatedAt = Date.now();
+    finishArena(this.sim, 'draw', 'server_error');
+    this.broadcast(publicArenaSnapshot(this.sim, this.sim.updatedAt));
+    this.broadcast(this.endPayload(this.sim.updatedAt));
+    this.endAnnounced = true;
+    if (this.tickHandle) clearInterval(this.tickHandle);
+    this.tickHandle = null;
+    await this.state.storage.put('sim', this.sim);
   }
 
   strike(socket, reason) {

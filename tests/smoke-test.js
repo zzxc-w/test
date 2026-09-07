@@ -8,26 +8,27 @@ const original = fs.readFileSync(sourcePath, 'utf8');
 const html = fs.readFileSync(htmlPath, 'utf8');
 const htmlIds = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
 assert.strictEqual(new Set(htmlIds).size, htmlIds.length, 'HTML IDs must be unique');
-for (const id of ['settingsButton','multiplayerButton','settingsMenu','closeSettings','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText']) {
+for (const id of ['settingsButton','multiplayerButton','settingsMenu','closeSettings','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText','playerNameLabel','nameSetup','playerNameInput','nameError','returningName']) {
   assert(htmlIds.includes(id), `missing UI element #${id}`);
 }
-for (const file of ['multiplayer/config.js','multiplayer/presence.js','multiplayer/challenges.js','multiplayer/arena.js','multiplayer/client.js']) assert(html.includes(`src="${file}?v=1"`), `missing multiplayer script ${file}`);
-assert(html.indexOf('multiplayer/config.js') < html.indexOf('multiplayer/client.js') && html.indexOf('multiplayer/client.js') < html.indexOf('game.js?v=9'), 'multiplayer scripts must load before the game bridge');
+for (const file of ['multiplayer/config.js?v=1','multiplayer/presence.js?v=2','multiplayer/challenges.js?v=1','multiplayer/arena.js?v=2','multiplayer/client.js?v=2']) assert(html.includes(`src="${file}"`), `missing multiplayer script ${file}`);
+assert(html.indexOf('multiplayer/config.js') < html.indexOf('multiplayer/client.js') && html.indexOf('multiplayer/client.js') < html.indexOf('game.js?v=10'), 'multiplayer scripts must load before the game bridge');
 assert(html.includes("apiBase: 'https://verdant-star-multiplayer.zxuchen.workers.dev'"), 'production multiplayer endpoint must be configured');
 assert(!html.includes('SESSION_SIGNING_KEY'), 'multiplayer signing secret must never be shipped to the browser');
 assert(/data-key="f"[^>]*>Parry</.test(html), 'touch controls must include Parry');
 assert(/data-key="m"[^>]*>Map</.test(html), 'touch controls must include Map');
 assert(!original.includes('ctx.clearRect'), 'landmark art must not punch transparent holes through the world canvas');
-const needle = '  updateUI(); requestAnimationFrame(frame);\n})();';
+const needle = '  configureNameSetup(); updateUI(); requestAnimationFrame(frame);\n})();';
 assert(original.includes(needle), 'test hook insertion point changed');
-const source = original.replace(needle, `  updateUI();
+const source = original.replace(needle, `  configureNameSetup(); updateUI();
   globalThis.__test = {
     ctx, player, treasures, enemies, map, areas, landmarks, resourceNodes, taps, travelTargets, dash, dashCooldownDuration, cultivationAdvancements, qiCapacity, reconcileQuestProgress,
     passableAt, runDevAction, safeTeleport, save, bossDefs, bossStates, tutorial, itemDefs,
     currentBreakthroughRequirement, missingRequirements, breakthrough, enemyProfile,
-    startEnemyAttack, resolveEnemyAttack, updateEnemyCombat, parry, attack, useTalisman, cultivate, killEnemy, loseCultivationStage, handlePlayerDeath, handleActions, draw, updateUI,
+    startEnemyAttack, resolveEnemyAttack, updateEnemyCombat, parry, attack, useTalisman, cultivate, killEnemy, loseCultivationStage, handlePlayerDeath, handleActions, draw, updateUI, cleanPlayerName, configureNameSetup,
     get quest() { return quest; }, set quest(value) { quest = value; },
     get mapOpen() { return mapOpen; },
+    get playerName() { return playerName; }, set playerName(value) { playerName = value; },
     get suppressSave() { return suppressSave; }
   };
   requestAnimationFrame(frame);
@@ -36,7 +37,7 @@ const source = original.replace(needle, `  updateUI();
 class FakeElement {
   constructor(id) {
     this.id = id; this.hidden = ['settingsMenu', 'devMenu', 'clearConfirm'].includes(id);
-    this.style = {}; this.dataset = {}; this.listeners = {}; this.textContent = ''; this.innerHTML = '';
+    this.style = {}; this.dataset = {}; this.listeners = {}; this.textContent = ''; this.innerHTML = ''; this.value = '';
     const classes = new Set(); this.captured = new Set();
     this.classList = { toggle(name, force) { if (force === false) classes.delete(name); else if (force === true || !classes.has(name)) classes.add(name); else classes.delete(name); }, add: name => classes.add(name), remove: name => classes.delete(name), contains: name => classes.has(name) };
   }
@@ -176,7 +177,7 @@ function boot(saved) {
   assert(migrated.t.player.keyItems.has('sectbreaker_core'), 'legacy boss victory must grant its breakthrough key');
   assert(migrated.t.tutorial.attacked && migrated.t.tutorial.cultivated, 'legacy progress should complete the tutorial');
   assert.strictEqual(migrated.elements.get('quest').hidden, true, 'completed tutorial should hide guided objectives');
-  assert.strictEqual(JSON.parse(migrated.storage.get('verdant-star-save')).version, 6, 'legacy save should migrate to v6');
+  assert.strictEqual(JSON.parse(migrated.storage.get('verdant-star-save')).version, 7, 'legacy save should migrate to v7');
   assert.strictEqual(migrated.t.treasures.slice(0, 5).filter(cache => cache.opened).length, 5, 'old cache indices must remain intact');
 
   const allBosses = Object.fromEntries(migrated.t.bossDefs.map(boss => [boss.id, true]));
@@ -291,12 +292,35 @@ function boot(saved) {
 }
 
 {
+  const fresh = boot();
+  assert.strictEqual(fresh.elements.get('nameSetup').hidden, false, 'a new journey must ask for a permanent name');
+  fresh.elements.get('start').dispatch('click');
+  assert.strictEqual(fresh.elements.get('overlay').hidden, false, 'an empty name must not start the game');
+  fresh.elements.get('playerNameInput').value = '  Jade   Fox  ';
+  fresh.elements.get('start').dispatch('click');
+  assert.strictEqual(fresh.elements.get('overlay').hidden, true, 'a valid name should start the game');
+  assert.strictEqual(JSON.parse(fresh.storage.get('verdant-star-save')).name, 'Jade Fox', 'the chosen name must be stored in the main save');
+  assert.strictEqual(fresh.elements.get('playerNameLabel').textContent, 'Jade Fox');
+  assert.strictEqual(fresh.t.cleanPlayerName('<script>'), '');
+  assert.strictEqual(fresh.t.cleanPlayerName('a'.repeat(21)), '');
+  assert.strictEqual(fresh.t.cleanPlayerName('青云-7'), '青云-7');
+
+  const legacy = boot({ version: 6, stones: 9 });
+  assert.strictEqual(legacy.elements.get('nameSetup').hidden, false, 'an unnamed legacy save gets one name choice');
+  const named = boot({ version: 7, name: 'River Sage', stones: 9 });
+  assert.strictEqual(named.elements.get('nameSetup').hidden, true, 'a named save must not expose renaming');
+  assert.strictEqual(named.elements.get('returningName').textContent, 'Returning as River Sage');
+}
+
+{
   const app = boot({ version: 4, quest: 2, stones: 5 });
+  app.storage.set('verdant-star-multiplayer-name', 'Cultivator 1234');
   const keydown = app.globalListeners.keydown[0];
   keydown({ ctrlKey: true, shiftKey: true, altKey: true, code: 'KeyD', key: 'd', preventDefault() {}, stopPropagation() {} });
   assert.strictEqual(app.elements.get('devMenu').hidden, false, 'hidden dev chord should open the test chamber');
   app.elements.get('confirmClear').dispatch('click');
-  assert.strictEqual(app.storage.has('verdant-star-save'), false, 'clear progress should remove only the game save');
+  assert.strictEqual(app.storage.has('verdant-star-save'), false, 'clear progress should remove the game save');
+  assert.strictEqual(app.storage.has('verdant-star-multiplayer-name'), false, 'clear progress should remove the legacy random name');
   assert.strictEqual(app.t.suppressSave, true, 'clear progress should suppress unload autosave');
   for (const fn of app.globalListeners.beforeunload || []) fn({});
   assert.strictEqual(app.storage.has('verdant-star-save'), false, 'unload must not recreate a cleared save');

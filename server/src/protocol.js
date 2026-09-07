@@ -3,6 +3,7 @@ import { LIMITS } from './constants.js';
 const encoder = new TextEncoder();
 const namePattern = /^[\p{L}\p{N} _.-]{1,20}$/u;
 const emotes = new Set(['bow', 'wave', 'meditate', 'none']);
+const presenceActions = new Set(['none', 'attack', 'parry', 'dash']);
 
 export function jsonResponse(body, status = 200, headers = {}) {
   return new Response(JSON.stringify(body), {
@@ -28,7 +29,7 @@ export function cleanDisplayName(value) {
 
 export function validatePresence(message) {
   if (message?.type !== 'presence') return null;
-  if (!hasOnly(message, ['type', 'seq', 'x', 'y', 'facing', 'moving', 'emote'])) return null;
+  if (!hasOnly(message, ['type', 'seq', 'x', 'y', 'facing', 'moving', 'emote', 'action'])) return null;
   const x = Number(message.x);
   const y = Number(message.y);
   const seq = Number(message.seq);
@@ -36,8 +37,9 @@ export function validatePresence(message) {
   if (x < 0 || x > LIMITS.worldWidth || y < 0 || y > LIMITS.worldHeight) return null;
   if (!Number.isSafeInteger(seq) || seq < 0) return null;
   const emote = emotes.has(message.emote) ? message.emote : 'none';
+  const action = presenceActions.has(message.action) ? message.action : 'none';
   const facing = typeof message.facing === 'string' ? message.facing.slice(0, 12) : normalizeAngle(Number(message.facing) || 0);
-  return { x, y, facing, moving: message.moving === true, seq, emote };
+  return { x, y, facing, moving: message.moving === true, seq, emote, action };
 }
 
 export function validateChallengeRequest(message) {

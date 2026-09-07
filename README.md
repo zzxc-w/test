@@ -17,11 +17,11 @@ A pixel-styled top-down cultivation adventure that runs directly in a browser.
 
 Developer test chamber: press **Ctrl + Shift + Alt + D** on a hardware keyboard, or press and hold **Menu** for about two seconds on touch devices.
 
-After the short combat/cultivation tutorial, exploration is self-directed. Regional materials and unique boss drops unlock later cultivation stages. Progress is saved in the browser automatically.
+After the short combat/cultivation tutorial, exploration is self-directed. Regional materials and unique boss drops unlock later cultivation stages. Progress is saved in the browser automatically. A cultivator name is chosen once when beginning an unnamed save and remains bound to that journey; clearing progress returns to name creation.
 
 ## Multiplayer
 
-Multiplayer connects automatically after beginning the journey. The **Online · Nearby** button lists cultivators within challenge range. Accepted challenges move both players into a separate normalized Arena Realm with server-authoritative movement, attacks, parries, dashes, health, and results. Arena outcomes never alter local cultivation progress or the normal-world save, and the solo game remains playable if the service is unavailable.
+Multiplayer connects automatically after beginning the journey. The **Online · Nearby** button lists cultivators within challenge range. Accepted challenges move both players into a separate normalized Arena Realm with pixel fighters, visible attack/parry/dash states, health and cooldown displays, and server-authoritative combat. **Leave Realm** and automatic stalled-connection recovery always return the player to the unchanged normal world. Arena outcomes never alter local cultivation progress or the normal-world save, and the solo game remains playable if the service is unavailable.
 
 The browser client lives in `multiplayer/`; the Cloudflare Worker and deployment notes live in `server/`.
 
