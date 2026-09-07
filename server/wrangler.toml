@@ -1,0 +1,58 @@
+name = "verdant-star-multiplayer"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+[[durable_objects.bindings]]
+name = "WORLD_ROOMS"
+class_name = "WorldRoom"
+
+[[durable_objects.bindings]]
+name = "ARENA_ROOMS"
+class_name = "ArenaRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WorldRoom", "ArenaRoom"]
+
+[vars]
+PROTOCOL_VERSION = "1"
+MAP_VERSION = "1"
+RULESET_VERSION = "1"
+WORLD_SHARD = "verdant-star-public-1"
+ALLOWED_ORIGINS = "http://localhost:8000,http://127.0.0.1:8000,https://zzxc-w.github.io"
+
+[env.staging]
+name = "verdant-star-multiplayer-staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "WORLD_ROOMS"
+class_name = "WorldRoom"
+
+[[env.staging.durable_objects.bindings]]
+name = "ARENA_ROOMS"
+class_name = "ArenaRoom"
+
+[env.staging.vars]
+PROTOCOL_VERSION = "1"
+MAP_VERSION = "1"
+RULESET_VERSION = "1"
+WORLD_SHARD = "verdant-star-staging-1"
+ALLOWED_ORIGINS = "http://localhost:8000,http://127.0.0.1:8000,https://zzxc-w.github.io"
+
+[env.production]
+name = "verdant-star-multiplayer"
+
+[[env.production.durable_objects.bindings]]
+name = "WORLD_ROOMS"
+class_name = "WorldRoom"
+
+[[env.production.durable_objects.bindings]]
+name = "ARENA_ROOMS"
+class_name = "ArenaRoom"
+
+[env.production.vars]
+PROTOCOL_VERSION = "1"
+MAP_VERSION = "1"
+RULESET_VERSION = "1"
+WORLD_SHARD = "verdant-star-public-1"
+ALLOWED_ORIGINS = "https://zzxc-w.github.io"
