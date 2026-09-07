@@ -19,6 +19,12 @@ Developer test chamber: press **Ctrl + Shift + Alt + D** on a hardware keyboard,
 
 After the short combat/cultivation tutorial, exploration is self-directed. Regional materials and unique boss drops unlock later cultivation stages. Progress is saved in the browser automatically.
 
+## Multiplayer
+
+Multiplayer connects automatically after beginning the journey. The **Online · Nearby** button lists cultivators within challenge range. Accepted challenges move both players into a separate normalized Arena Realm with server-authoritative movement, attacks, parries, dashes, health, and results. Arena outcomes never alter local cultivation progress or the normal-world save, and the solo game remains playable if the service is unavailable.
+
+The browser client lives in `multiplayer/`; the Cloudflare Worker and deployment notes live in `server/`.
+
 ## Local development
 
 This game has no build dependencies. Serve the repository with any static web server, then open `index.html` through that server. Changes to `main` deploy automatically through GitHub Pages after the validation step passes.

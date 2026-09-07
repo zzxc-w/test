@@ -2,6 +2,10 @@
 
 Multiplayer is feasible, but GitHub Pages can only host the browser client. A separate real-time service must coordinate connected players and authoritatively simulate duels.
 
+## Current status
+
+Multiplayer v1 is implemented. The Cloudflare Worker is deployed at `https://verdant-star-multiplayer.zxuchen.workers.dev`; a separate staging Worker is used for pre-release checks. Live automated tests cover two-client presence, challenge acceptance, arena admission, authoritative movement, and reconnect. The GitHub Pages client connects automatically but always falls back to solo play when the service is unavailable.
+
 ## Intended first release
 
 - Keep the existing deterministic map and local PvE/progression available offline.
@@ -49,4 +53,3 @@ Worker deployment should use a separate workflow scoped to `server/**`. Cloudfla
 4. Add challenge request/accept/decline/timeout behavior and iPad bottom sheets.
 5. Add the authoritative isolated arena with no progression rewards.
 6. Roll out to invited testers, then consider accounts, ratings or server-side progression later.
-

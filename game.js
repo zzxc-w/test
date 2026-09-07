@@ -23,11 +23,13 @@
     return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
   };
 
-  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','caches','zone','time','quest','questText','messages','overlay','start','compass','compassArrow','compassText','interactPrompt','settingsButton','settingsMenu','closeSettings','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText'].map(id => [id, document.getElementById(id)]));
+  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','caches','zone','time','quest','questText','messages','overlay','start','compass','compassArrow','compassText','interactPrompt','settingsButton','multiplayerButton','settingsMenu','closeSettings','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText'].map(id => [id, document.getElementById(id)]));
   const keys = new Set(), taps = new Set(), keyboardKeys = new Set(), touchPointers = new Map(), touchKeyCounts = new Map();
   let started = false, paused = false, last = performance.now(), playTime = 0, shake = 0, flash = 0, runtimeErrorShown = false, mapOpen = false;
   let activeMenu = null, menuWasPaused = false, suppressSave = false, loadedSaveVersion = 0;
   const dev = { invulnerable: false, noCooldowns: false };
+  const multiplayerApi = globalThis.VerdantMultiplayer || null;
+  let multiplayer = null, multiplayerPanel = null, arenaOverlay = null, multiplayerPanelOpen = false;
 
   const colors = {
     grass: ['#314f38', '#35563d'], forest: ['#223d31', '#274636'], water: ['#183b49', '#1c4653'],
@@ -216,7 +218,100 @@
   function addMessage(text, type = '') {
     messages.unshift({ text, type, life: 4.5 });
     messages = messages.slice(0, 4);
-    ui.messages.innerHTML = messages.map(m => `<div class="msg ${m.type}">${m.text}</div>`).join('');
+    renderMessages();
+  }
+
+  function renderMessages() {
+    const escaped = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+    ui.messages.innerHTML = messages.map(m => `<div class="msg ${m.type === 'good' || m.type === 'bad' ? m.type : ''}">${escaped(m.text)}</div>`).join('');
+  }
+
+  function multiplayerName() {
+    try {
+      const existing = localStorage.getItem('verdant-star-multiplayer-name');
+      if (existing) return existing;
+      const name = `Cultivator ${Math.floor(1000 + Math.random() * 9000)}`;
+      localStorage.setItem('verdant-star-multiplayer-name', name);
+      return name;
+    } catch (_) { return `Cultivator ${Math.floor(1000 + Math.random() * 9000)}`; }
+  }
+
+  function nearbyCultivators() {
+    return multiplayer ? multiplayer.presence.nearby(player.x, player.y, 360, Date.now()) : [];
+  }
+
+  function updateMultiplayerStatus() {
+    if (!ui.multiplayerButton || !multiplayer) return;
+    const status = multiplayer.status;
+    ui.multiplayerButton.dataset.status = status;
+    const count = nearbyCultivators().length;
+    ui.multiplayerButton.textContent = status === 'online' ? `Online · ${count} nearby` : `${status[0].toUpperCase()}${status.slice(1)} · Nearby`;
+    if (multiplayerPanel && multiplayerPanelOpen) multiplayerPanel.render(nearbyCultivators());
+  }
+
+  function setMultiplayerPanel(open) {
+    multiplayerPanelOpen = Boolean(open && multiplayerPanel && !multiplayer?.arena.active);
+    if (multiplayerPanel) {
+      multiplayerPanel.element.hidden = !multiplayerPanelOpen;
+      if (multiplayerPanelOpen) multiplayerPanel.render(nearbyCultivators());
+    }
+    if (ui.multiplayerButton) ui.multiplayerButton.setAttribute('aria-expanded', String(multiplayerPanelOpen));
+    releaseAllInputs();
+  }
+
+  function initMultiplayer() {
+    if (multiplayer || !multiplayerApi || !ui.multiplayerButton) return;
+    const config = globalThis.VERDANT_MULTIPLAYER_CONFIG || { enabled: false };
+    multiplayer = multiplayerApi.createClient({ config });
+    multiplayerPanel = multiplayerApi.mountChallengePanel(multiplayer.challenges, {
+      parent: document.getElementById('shell'), getNearby: nearbyCultivators
+    });
+    multiplayerPanel.element.hidden = true;
+    const close = document.createElement('button');
+    close.type = 'button'; close.textContent = 'Close'; close.setAttribute('aria-label', 'Close nearby cultivators');
+    close.style.cssText = 'float:right;min-height:48px;margin:-8px 0 8px 8px;padding:8px 14px;border:1px solid #d5bd78;border-radius:10px;background:#17212b;color:#fff';
+    close.addEventListener('click', () => setMultiplayerPanel(false));
+    multiplayerPanel.element.prepend(close);
+    arenaOverlay = multiplayerApi.mountArenaOverlay(multiplayer.arena, {
+      parent: document.getElementById('shell'),
+      onInput: input => multiplayer.arena.setInput(input, true)
+    });
+    multiplayer.subscribe((event, detail) => {
+      if (event === 'status') updateMultiplayerStatus();
+      if (event === 'online') addMessage('Joined the shared cultivation world.', 'good');
+    });
+    multiplayer.challenges.subscribe((event, detail) => {
+      if (event === 'offer') { setMultiplayerPanel(true); addMessage(`${detail.fromName} requests an arena duel.`, 'good'); }
+      if (event === 'status' && detail?.status === 'declined') addMessage('The arena challenge was declined.');
+      if (event === 'status' && detail?.status === 'unavailable') addMessage('That cultivator is no longer available.', 'bad');
+    });
+    multiplayer.arena.subscribe((event, detail) => {
+      if (event === 'start') { save(); setMultiplayerPanel(false); releaseAllInputs(); addMessage('Entering the Arena Realm. Local progression is paused.', 'good'); }
+      if (event === 'end') {
+        releaseAllInputs();
+        const won = detail?.winnerId && detail.winnerId === multiplayer.session?.playerId;
+        addMessage(detail?.winnerId === 'draw' ? 'The arena ends in a draw.' : won ? 'Arena victory. No cultivation rewards were changed.' : 'The arena closes. Your cultivation is unchanged.', won ? 'good' : '');
+      }
+    });
+    updateMultiplayerStatus();
+    multiplayer.connect({ name: multiplayerName() });
+  }
+
+  function submitArenaInput() {
+    if (!multiplayer?.arena.active) return;
+    const touch = arenaOverlay?.input?.snapshot?.() || { moveX: 0, moveY: 0, aimX: 1, aimY: 0 };
+    let moveX = touch.moveX + ((keys.has('d') || keys.has('arrowright')) ? 1 : 0) - ((keys.has('a') || keys.has('arrowleft')) ? 1 : 0);
+    let moveY = touch.moveY + ((keys.has('s') || keys.has('arrowdown')) ? 1 : 0) - ((keys.has('w') || keys.has('arrowup')) ? 1 : 0);
+    moveX = clamp(moveX, -1, 1); moveY = clamp(moveY, -1, 1);
+    const moving = Math.hypot(moveX, moveY);
+    const aimX = moving ? moveX / moving : touch.aimX;
+    const aimY = moving ? moveY / moving : touch.aimY;
+    multiplayer.arena.setInput({
+      moveX, moveY, aimX, aimY,
+      attack: touch.attack || taps.has(' '), parry: touch.parry || taps.has('f') || taps.has('l'),
+      dash: touch.dash || taps.has('shift') || taps.has('k')
+    });
+    taps.clear();
   }
 
   function burst(x, y, color, count = 8, speed = 60) {
@@ -637,7 +732,9 @@
   }
 
   function update(dt) {
-    if (!started || paused) return;
+    if (!started) return;
+    if (multiplayer?.arena.active) { submitArenaInput(); return; }
+    if (paused) return;
     playTime += dt;
     player.attackCd = Math.max(0, player.attackCd - dt); player.attackTimer = Math.max(0, player.attackTimer - dt);
     player.dashCd = Math.max(0, player.dashCd - dt); player.invuln = Math.max(0, player.invuln - dt); player.talismanCd = Math.max(0, player.talismanCd - dt);
@@ -682,7 +779,7 @@
     pickups = pickups.filter(p => p.life > 0);
     for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= .94; p.vy *= .94; p.life -= dt; }
     particles = particles.filter(p => p.life > 0); slashes.forEach(s => s.life -= dt); slashes = slashes.filter(s => s.life > 0);
-    messages.forEach(m => m.life -= dt); const ml = messages.length; messages = messages.filter(m => m.life > 0); if (ml !== messages.length) ui.messages.innerHTML = messages.map(m => `<div class="msg ${m.type}">${m.text}</div>`).join('');
+    messages.forEach(m => m.life -= dt); const ml = messages.length; messages = messages.filter(m => m.life > 0); if (ml !== messages.length) renderMessages();
     shake *= .86; flash = Math.max(0, flash - dt * 1.2);
 
     const zn = zoneName();
@@ -696,6 +793,10 @@
     if (discoveredSomething) save();
     if (reconcileQuestProgress()) save();
     if (Math.floor(playTime) % 12 === 0 && Math.floor((playTime - dt)) % 12 !== 0) save();
+    if (multiplayer) {
+      const moving = keys.has('w') || keys.has('a') || keys.has('s') || keys.has('d') || keys.has('arrowup') || keys.has('arrowdown') || keys.has('arrowleft') || keys.has('arrowright');
+      if (multiplayer.updatePresence({ x: player.x, y: player.y, facing: player.facing.toFixed(3), moving })) updateMultiplayerStatus();
+    }
     updateUI();
   }
 
@@ -932,6 +1033,7 @@
     plants.forEach(p => drawPlant(p, cam, time));
     resourceNodes.forEach(node => drawResourceNode(node, cam, time));
     pickups.forEach(p => { const s = screenPos(p.x, p.y, cam), b = Math.sin(time * 5 + p.bob) * 3; ctx.fillStyle = '#07110eaa'; ctx.fillRect(s.x - 6, s.y + 6, 12, 3); ctx.fillStyle = '#79e1b7'; ctx.fillRect(s.x - 4, s.y - 5 + b, 8, 9); ctx.fillStyle = '#c8ffe9'; ctx.fillRect(s.x - 1, s.y - 3 + b, 3, 4); });
+    if (multiplayer && !multiplayer.arena.active) multiplayerApi.drawRemotePlayers(ctx, multiplayer.presence.getRenderable(Date.now()), { camera: cam });
     enemies.slice().sort((a,b)=>a.y-b.y).forEach(e => drawEnemy(e, cam, time));
     drawPlayer(cam);
     slashes.forEach(slash => { const p = screenPos(slash.x, slash.y, cam); ctx.strokeStyle = `rgba(255,230,167,${slash.life / .18})`; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(p.x, p.y, 31, slash.a - .8, slash.a + .8); ctx.stroke(); });
@@ -1128,7 +1230,12 @@
   addEventListener('pointerup', e => releaseTouchPointer(e.pointerId), true);
   addEventListener('pointercancel', e => releaseTouchPointer(e.pointerId), true);
   addEventListener('pagehide', releaseAllInputs);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAllInputs(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) return;
+    releaseAllInputs();
+    if (multiplayer?.arena.active) multiplayer.arena.setInput({ moveX: 0, moveY: 0, aimX: 1, aimY: 0, attack: false, parry: false, dash: false }, true);
+    else multiplayer?.updatePresence({ x: player.x, y: player.y, facing: player.facing.toFixed(3), moving: false }, true);
+  });
   document.querySelectorAll('[data-key]').forEach(btn => {
     const k = btn.dataset.key;
     btn.addEventListener('pointerdown', e => {
@@ -1163,6 +1270,7 @@
     if (suppressMenuClick) { e.preventDefault(); suppressMenuClick = false; return; }
     openMenu('settings');
   });
+  ui.multiplayerButton.addEventListener('click', () => setMultiplayerPanel(!multiplayerPanelOpen));
   ui.closeSettings.addEventListener('click', closeMenu);
   ui.closeDev.addEventListener('click', closeMenu);
   ui.clearProgress.addEventListener('click', () => { ui.clearConfirm.hidden = false; ui.confirmClear.focus(); });
@@ -1182,7 +1290,7 @@
     const target = travelTargets[travelButton.dataset.devTravel];
     if (target && safeTeleport(target[0], target[1])) { player.invuln = Math.max(player.invuln, 2); updateUI(); updateDevStatus(); save(); }
   });
-  ui.start.addEventListener('click', () => { started = true; ui.overlay.hidden = true; canvas.focus(); addMessage('The Verdant Star stirs above the silent sect.', 'good'); updateUI(); });
+  ui.start.addEventListener('click', () => { started = true; ui.overlay.hidden = true; canvas.focus(); addMessage('The Verdant Star stirs above the silent sect.', 'good'); updateUI(); initMultiplayer(); });
   addEventListener('beforeunload', () => { if (!suppressSave) save(); });
 
   const hadSave = load();

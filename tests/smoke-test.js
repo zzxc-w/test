@@ -8,9 +8,13 @@ const original = fs.readFileSync(sourcePath, 'utf8');
 const html = fs.readFileSync(htmlPath, 'utf8');
 const htmlIds = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
 assert.strictEqual(new Set(htmlIds).size, htmlIds.length, 'HTML IDs must be unique');
-for (const id of ['settingsButton','settingsMenu','closeSettings','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText']) {
+for (const id of ['settingsButton','multiplayerButton','settingsMenu','closeSettings','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText']) {
   assert(htmlIds.includes(id), `missing UI element #${id}`);
 }
+for (const file of ['multiplayer/config.js','multiplayer/presence.js','multiplayer/challenges.js','multiplayer/arena.js','multiplayer/client.js']) assert(html.includes(`src="${file}?v=1"`), `missing multiplayer script ${file}`);
+assert(html.indexOf('multiplayer/config.js') < html.indexOf('multiplayer/client.js') && html.indexOf('multiplayer/client.js') < html.indexOf('game.js?v=9'), 'multiplayer scripts must load before the game bridge');
+assert(html.includes("apiBase: 'https://verdant-star-multiplayer.zxuchen.workers.dev'"), 'production multiplayer endpoint must be configured');
+assert(!html.includes('SESSION_SIGNING_KEY'), 'multiplayer signing secret must never be shipped to the browser');
 assert(/data-key="f"[^>]*>Parry</.test(html), 'touch controls must include Parry');
 assert(/data-key="m"[^>]*>Map</.test(html), 'touch controls must include Map');
 assert(!original.includes('ctx.clearRect'), 'landmark art must not punch transparent holes through the world canvas');
@@ -134,6 +138,7 @@ function boot(saved) {
   assert.strictEqual(deadEnemy.alive, false, 'death reset must not revive defeated enemies');
   const saved = JSON.parse(storage.get('verdant-star-save'));
   assert.strictEqual(saved.realm, 0); assert.strictEqual(saved.stage, 3, 'death demotion must save immediately');
+  for (const transient of ['arena','opponent','ticket','network','multiplayer']) assert(!(transient in saved), `${transient} state must never enter the solo save`);
 }
 
 {

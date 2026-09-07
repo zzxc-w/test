@@ -101,6 +101,24 @@
       outline: 2px solid #e9c76e88;
       outline-offset: 1px;
     }
+    #multiplayerButton {
+      position: absolute;
+      z-index: 8;
+      top: 86px;
+      left: 12px;
+      min-height: 34px;
+      padding: 6px 10px;
+      border: 1px solid #d2c18d55;
+      border-radius: 3px;
+      background: #101923e8;
+      color: #aeb8b4;
+      cursor: pointer;
+      font: .72rem/1.2 system-ui, sans-serif;
+      touch-action: manipulation;
+    }
+    #multiplayerButton[data-status="online"] { border-color: #67d5a488; color: #aaf0d0; }
+    #multiplayerButton[data-status="connecting"], #multiplayerButton[data-status="reconnecting"] { border-color: #e6bd6388; color: #f1d38d; }
+    #multiplayerButton:hover, #multiplayerButton:focus-visible { outline: 2px solid #67d5a466; outline-offset: 2px; }
     #quest {
       position: absolute;
       top: 105px;
@@ -264,6 +282,7 @@
       </section>
     </div>
     <aside id="quest" class="panel"><h2>Current insight</h2><p id="questText">Seek a spirit vein and gather qi.</p></aside>
+    <button id="multiplayerButton" type="button" data-status="offline" aria-expanded="false">Offline · Nearby</button>
     <div id="compass" class="panel"><span id="compassArrow">&#9650;</span><span id="compassText">Spirit vein nearby</span></div>
     <div id="messages" aria-live="polite"></div>
     <div id="interactPrompt" class="panel" aria-live="polite"></div>
@@ -337,6 +356,12 @@
       </div>
     </section>
   </main>
-  <script src="game.js?v=8"></script>
+  <script src="multiplayer/config.js?v=1"></script>
+  <script src="multiplayer/presence.js?v=1"></script>
+  <script src="multiplayer/challenges.js?v=1"></script>
+  <script src="multiplayer/arena.js?v=1"></script>
+  <script src="multiplayer/client.js?v=1"></script>
+  <script>globalThis.VERDANT_MULTIPLAYER_CONFIG = Object.freeze({ enabled: true, apiBase: 'https://verdant-star-multiplayer.zxuchen.workers.dev' });</script>
+  <script src="game.js?v=9"></script>
 </body>
 </html>

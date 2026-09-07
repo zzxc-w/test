@@ -1,0 +1,16 @@
+{
+  "name": "verdant-star-multiplayer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/index.js && node --check src/world-room.js && node --check src/arena-room.js",
+    "dev": "wrangler dev --env staging",
+    "deploy:staging": "wrangler deploy --env staging",
+    "deploy:production": "wrangler deploy --env production"
+  },
+  "devDependencies": {
+    "wrangler": "^4.35.0"
+  }
+}
