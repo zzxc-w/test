@@ -74,9 +74,9 @@ The project is a dependency-free static site:
 
 ## Current state and known issues
 
-- Multiplayer v1 is implemented on `feature/multiplayer-v1`: cosmetic shared-world presence, proximity challenges, a separate normalized server-authoritative arena, reconnect handling, and iPad arena controls. Staging and production Workers are deployed; the production client endpoint is enabled in `index.html` pending GitHub merge/Pages publication.
+- Multiplayer v1 is live on GitHub Pages: cosmetic shared-world presence, proximity challenges, a separate normalized server-authoritative arena, reconnect handling, and iPad arena controls. Staging and production Workers are deployed, and `index.html` uses the production endpoint.
 - Multiplayer and arena state is deliberately excluded from `verdant-star-save`; the solo simulation pauses during a duel and remains the fail-open fallback.
-- Browser-client tests, 17 Worker protocol/simulation/security tests, the original smoke suite, and browser integration checks pass. Automated live tests passed against staging and production for health, two-client presence, challenge acceptance, isolated arena admission/input, and reconnect.
+- Browser-client tests, 17 Worker protocol/simulation/security tests, the original smoke suite, and browser integration checks pass. Automated live tests passed against staging and production for health, two-client presence, challenge acceptance, isolated arena admission/input, and reconnect; a two-tab production Pages check also passed through arena entry and touch-control rendering.
 - CI performs JavaScript syntax validation and dependency-free migration, progression, combat, dash, reset, and touch-state smoke tests, but still lacks full real-browser interaction coverage. Test desktop and touch behavior manually after major UI or input changes.
 - `game.js` and the inline CSS are monolithic. Concurrent broad edits are likely to conflict; use small branches/PRs and avoid assigning two people overlapping sections of `game.js`.
 - `main` was unprotected at the last check. `hydrogendesigns` currently resolves to read access, which likely means the collaborator invitation has not yet been accepted.
@@ -101,7 +101,7 @@ The project is a dependency-free static site:
 1. Confirm `hydrogendesigns` has accepted the invitation and now has write access.
 2. Work from the latest `main` using one feature branch per change; use pull requests and avoid simultaneous edits to the same monolithic file.
 3. Smoke-test production on desktop and touch, especially enemy telegraphs/parry timing, all boss drops, every breakthrough requirement, new-region navigation, old saves, and iPad multitouch.
-4. Publish `feature/multiplayer-v1` through a conflict-checked pull request, then verify the GitHub Pages client against production with two real browser tabs and iPad-sized controls.
+4. Test multiplayer with two separate physical devices/networks, especially iPad Safari background/reconnect behavior and long arena sessions.
 5. Add GitHub Actions Worker deployment only after scoped Cloudflare CI credentials are deliberately configured as repository secrets.
 6. Add broader real-browser interaction coverage when the UI grows further.
 7. Before major parallel feature work, modularize `game.js` incrementally with behavior and save-compatibility checks.
