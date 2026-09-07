@@ -8,11 +8,11 @@ _Last updated: 2026-09-06. Treat this as a continuity summary, not a substitute 
 
 The project is a dependency-free static site:
 
-- `index.html` contains the page structure, CSS, HUD, start overlay, settings/dev dialogs, responsive touch controls, and a fixed 960x540 canvas. It loads `game.js?v=7`.
+- `index.html` contains the page structure, CSS, HUD, start overlay, settings/dev dialogs, responsive touch controls, and a fixed 960x540 canvas. It loads `game.js?v=8`.
 - `game.js` is a single IIFE containing game data, deterministic world generation, input, update/render loops, combat, exploration, progression, quests, and save/load logic.
 - Graphics are drawn procedurally with Canvas 2D; smoothing is disabled for a pixel-art look.
 - There is no framework, package manager, build step, backend, account system, or asset pipeline.
-- Saves are device-local in `localStorage` under `verdant-star-save`; the current schema is version 5.
+- Saves are device-local in `localStorage` under `verdant-star-save`; the current schema is version 6.
 
 ## Implemented
 
@@ -24,7 +24,9 @@ The project is a dependency-free static site:
 - Five persistent bosses with unique key-item drops: Jadehorn Stag, Tempest Crane, Mirecoil Matriarch, Sectbreaker Golem, and Starfallen Warden.
 - Cultivation progression from Mortal through Nascent Soul. Full qi now requires a second cultivation action plus consumable regional ingredients/stones or durable boss keys; missing requirements provide lore clues rather than waypoints.
 - Guidance contains only the attack/parry and cultivation tutorial, then hides itself and the compass for discovery-led play.
-- Minimap destination markers appear only after the player approaches or discovers their region.
+- The minimap shows muted unknown area markers; names and bright markers unlock through stable area/landmark discovery IDs.
+- The compact minimap shows distinct area, shrine, vein, and player markers; `M`/Map opens a larger labelled world map.
+- Defeat removes exactly one minor cultivation stage, returns the player to Crossroads, and restores every still-living enemy and boss to full health without reviving defeated foes.
 - Autosave and frame-level error recovery.
 - A settings dialog with a two-step, game-save-only progress reset, plus a non-persistent hidden developer test chamber opened with `Ctrl+Shift+Alt+D`.
 - GitHub Pages deployment from `main`. The workflow syntax-checks `game.js`, runs dependency-free smoke tests, uploads the static repository, and deploys it.
@@ -37,6 +39,7 @@ The project is a dependency-free static site:
 - The version-3 migration intentionally restores caches affected by an older cache-reward crash. Do not remove that compatibility behavior casually.
 - Version 4 reconciles durable quest facts (kills, herbs, realm, caches, and boss state) in order. Boss defeat never bypasses unfinished cache requirements, and old saves with an already-defeated boss can complete once prerequisites are met.
 - Version 5 migrates the old quest into two tutorial flags, adds stable boss state, regional ingredients, and key items, and grants the Sectbreaker Core to any save that had already defeated the old boss.
+- Version 6 stores discoveries by stable area/landmark IDs and preserves name-based discoveries through migration.
 - Cultivation belongs near the green spirit veins, not at shrines or the sword-grave/cross landmark.
 - Preserve all legacy world coordinates when expanding the map. Append areas/caches instead of reordering them so old positions and cache-save indices remain valid.
 - Boss strength is fixed rather than player-scaled. Unique boss keys are durable proof of victory and are checked, not consumed, during realm breakthroughs.
@@ -64,10 +67,12 @@ The project is a dependency-free static site:
 - Expanded the world without shifting legacy locations; restored roads, boss arenas, cache clearings, and landmark tiles after biome painting.
 - Added enemy attack telegraphs/animation phases, parry and riposte combat, five boss key drops, and material-gated breakthroughs.
 - Replaced post-tutorial objectives with self-directed exploration; the settings inventory shows materials, keys, and next breakthrough requirements.
+- Fixed canvas-state and transparent-hole artifacts, added stable minimap discovery markers and safe developer travel entrances, and added a touch-friendly Menu hold shortcut for the developer chamber.
+- Multiplayer requires a separate real-time authority. `MULTIPLAYER.md` records the agreed safe boundary: shared social presence first, normalized server-authoritative arena duels, local PvE/progression retained until server-side accounts exist.
 
 ## Current state and known issues
 
-- The latest milestone is the 144x108 exploration expansion, phased enemy combat/parry system, five-boss key progression, material-gated cultivation, and v5 migration.
+- The latest milestone adds death demotion/enemy recovery, map and landmark clarity, safe developer access on touch, and the version-6 stable-discovery migration.
 - CI performs JavaScript syntax validation and dependency-free migration, progression, combat, dash, reset, and touch-state smoke tests, but still lacks full real-browser interaction coverage. Test desktop and touch behavior manually after major UI or input changes.
 - `game.js` and the inline CSS are monolithic. Concurrent broad edits are likely to conflict; use small branches/PRs and avoid assigning two people overlapping sections of `game.js`.
 - `main` was unprotected at the last check. `hydrogendesigns` currently resolves to read access, which likely means the collaborator invitation has not yet been accepted.
@@ -82,6 +87,7 @@ The project is a dependency-free static site:
 - `README.md` — player overview, controls, live link, and local-running notes.
 - `CONTRIBUTING.md` — shared branch, testing, commit, and pull-request workflow.
 - `AGENTS.md` — instructions for agents and project-continuity maintenance.
+- `MULTIPLAYER.md` — multiplayer authority, security, hosting and staged implementation plan.
 - `.gitignore` and `.gitattributes` — repository hygiene and consistent line endings.
 
 ## Next steps
@@ -89,6 +95,6 @@ The project is a dependency-free static site:
 1. Confirm `hydrogendesigns` has accepted the invitation and now has write access.
 2. Work from the latest `main` using one feature branch per change; use pull requests and avoid simultaneous edits to the same monolithic file.
 3. Smoke-test production on desktop and touch, especially enemy telegraphs/parry timing, all boss drops, every breakthrough requirement, new-region navigation, old saves, and iPad multitouch.
-4. Fix verified encoding artifacts.
+4. Connect a Cloudflare account, then implement the isolated multiplayer stages in `MULTIPLAYER.md`.
 5. Add real-browser interaction coverage when the UI grows further.
 6. Before major parallel feature work, modularize `game.js` incrementally with behavior and save-compatibility checks.

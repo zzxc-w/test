@@ -12,15 +12,18 @@ for (const id of ['settingsButton','settingsMenu','closeSettings','clearProgress
   assert(htmlIds.includes(id), `missing UI element #${id}`);
 }
 assert(/data-key="f"[^>]*>Parry</.test(html), 'touch controls must include Parry');
+assert(/data-key="m"[^>]*>Map</.test(html), 'touch controls must include Map');
+assert(!original.includes('ctx.clearRect'), 'landmark art must not punch transparent holes through the world canvas');
 const needle = '  updateUI(); requestAnimationFrame(frame);\n})();';
 assert(original.includes(needle), 'test hook insertion point changed');
 const source = original.replace(needle, `  updateUI();
   globalThis.__test = {
-    player, treasures, enemies, map, areas, landmarks, resourceNodes, dash, dashCooldownDuration, reconcileQuestProgress,
+    ctx, player, treasures, enemies, map, areas, landmarks, resourceNodes, taps, travelTargets, dash, dashCooldownDuration, cultivationAdvancements, qiCapacity, reconcileQuestProgress,
     passableAt, runDevAction, safeTeleport, save, bossDefs, bossStates, tutorial, itemDefs,
     currentBreakthroughRequirement, missingRequirements, breakthrough, enemyProfile,
-    startEnemyAttack, resolveEnemyAttack, updateEnemyCombat, parry, attack, useTalisman, cultivate, killEnemy, draw, updateUI,
+    startEnemyAttack, resolveEnemyAttack, updateEnemyCombat, parry, attack, useTalisman, cultivate, killEnemy, loseCultivationStage, handlePlayerDeath, handleActions, draw, updateUI,
     get quest() { return quest; }, set quest(value) { quest = value; },
+    get mapOpen() { return mapOpen; },
     get suppressSave() { return suppressSave; }
   };
   requestAnimationFrame(frame);
@@ -51,6 +54,12 @@ class FakeElement {
   for (const cache of t.treasures) assert(t.passableAt(cache.x, cache.y, 7), `${cache.id} must remain reachable`);
   for (const enemy of t.enemies.filter(enemy => enemy.boss)) assert(t.passableAt(enemy.x, enemy.y, enemy.r), `${enemy.title} must spawn on passable terrain`);
   t.updateUI(); t.draw(1000);
+  assert.strictEqual(t.ctx.lineWidth, 1, 'rendering must reset canvas line width before minimap and the next frame');
+  for (const [name, [x, y]] of Object.entries(t.travelTargets)) {
+    assert(t.passableAt((x + .5) * 24, (y + .5) * 24, t.player.r), `${name} dev travel target must be passable`);
+    if (!name.startsWith('vein')) for (const boss of t.bossDefs) assert(Math.hypot(x - boss.x, y - boss.y) * 24 > boss.range + 48, `${name} dev travel must not drop onto ${boss.title}`);
+  }
+  for (const area of t.areas.slice(5)) for (const landmark of t.landmarks) assert(!(area.x === landmark.x && area.y === landmark.y), `${area.name} icon must not stack with a landmark`);
 }
 
 function boot(saved) {
@@ -66,10 +75,10 @@ function boot(saved) {
   touchButtons[0].dataset.key = 'w'; touchButtons[1].dataset.key = 'd'; touchButtons[2].dataset.key = 'd';
   const storage = new Map();
   if (saved) storage.set('verdant-star-save', JSON.stringify(saved));
-  let reloads = 0;
+  let reloads = 0, now = 0;
   const sandbox = {
     console, Math, JSON, Set, Map,
-    performance: { now: () => 0 },
+    performance: { now: () => now },
     document: { hidden: false, querySelector: selector => selector === '#game' ? canvas : get(selector.replace('#', '')), getElementById: get, querySelectorAll: selector => selector === '[data-key]' ? touchButtons : [], addEventListener(type, fn) { (documentListeners[type] ||= []).push(fn); } },
     addEventListener(type, fn) { (globalListeners[type] ||= []).push(fn); },
     requestAnimationFrame() {},
@@ -78,7 +87,7 @@ function boot(saved) {
   };
   sandbox.globalThis = sandbox;
   vm.runInNewContext(source, sandbox, { filename: sourcePath });
-  return { t: sandbox.__test, elements, storage, globalListeners, documentListeners, touchButtons, document: sandbox.document, get reloads() { return reloads; } };
+  return { t: sandbox.__test, elements, storage, globalListeners, documentListeners, touchButtons, document: sandbox.document, advanceTime(ms) { now += ms; }, get reloads() { return reloads; } };
 }
 
 {
@@ -93,6 +102,45 @@ function boot(saved) {
     previous = cooldown; minimum = Math.min(minimum, cooldown);
   }
   assert(Math.abs(minimum - .36) < 1e-9, 'dash cooldown should reach its .36s floor');
+}
+
+{
+  const { t } = boot();
+  const stages = [3, 5, 4, 3, 1];
+  for (let realm = 0; realm < stages.length; realm++) for (let stage = 1; stage <= stages[realm]; stage++) {
+    t.player.realm = realm; t.player.stage = stage; t.player.maxHp = 1000; t.player.attack = 500;
+    const before = t.cultivationAdvancements(), lost = t.loseCultivationStage(), after = t.cultivationAdvancements();
+    if (realm === 0 && stage === 1) { assert.strictEqual(lost, false); assert.strictEqual(after, 0); }
+    else { assert.strictEqual(lost, true); assert.strictEqual(after, before - 1, `${realm}:${stage} must lose exactly one minor stage`); }
+  }
+  t.player.realm = 2; t.player.stage = 1; t.player.maxHp = 200; t.player.attack = 50;
+  t.loseCultivationStage();
+  assert.strictEqual(t.player.realm, 1); assert.strictEqual(t.player.stage, 5); assert.strictEqual(t.player.maxQi, t.qiCapacity(1, 5));
+}
+
+{
+  const { t, storage } = boot();
+  t.player.realm = 1; t.player.stage = 1; t.player.maxHp = 118; t.player.hp = 1; t.player.attack = 21; t.player.maxQi = 150; t.player.qi = 100;
+  const attacker = t.enemies.find(e => !e.boss), deadEnemy = t.enemies.find(e => !e.boss && e !== attacker), livingBoss = t.enemies.find(e => e.bossId === 'sectbreaker');
+  attacker.x = t.player.x + 5; attacker.y = t.player.y; attacker.attackAngle = Math.PI; attacker.attackLanded = false;
+  attacker.hp = 1; attacker.attackState = 'active'; livingBoss.hp = 1; livingBoss.attackState = 'windup'; livingBoss.stagger = 1;
+  deadEnemy.alive = false; deadEnemy.hp = 0;
+  t.updateEnemyCombat(attacker, { ...t.enemyProfile(attacker), damage: 999, range: 80, kind: 'slam' }, .02);
+  assert.strictEqual(t.player.realm, 0); assert.strictEqual(t.player.stage, 3, 'realm boundary death must fall to the previous final stage');
+  assert.strictEqual(t.player.maxHp, 100); assert.strictEqual(t.player.attack, 16); assert.strictEqual(t.player.hp, 100);
+  assert.strictEqual(t.player.qi, 75); assert.strictEqual(t.player.x, 47.5 * 24); assert.strictEqual(t.player.y, 39 * 24);
+  assert.strictEqual(attacker.hp, attacker.maxHp); assert.strictEqual(livingBoss.hp, livingBoss.maxHp);
+  assert.strictEqual(attacker.attackState, 'idle'); assert.strictEqual(livingBoss.attackState, 'idle');
+  assert.strictEqual(deadEnemy.alive, false, 'death reset must not revive defeated enemies');
+  const saved = JSON.parse(storage.get('verdant-star-save'));
+  assert.strictEqual(saved.realm, 0); assert.strictEqual(saved.stage, 3, 'death demotion must save immediately');
+}
+
+{
+  const { t } = boot();
+  t.player.qi = 40; t.taps.add('f'); t.taps.add('q'); t.handleActions();
+  assert(t.player.parryTimer > 0, 'parry should win simultaneous action input');
+  assert.strictEqual(t.player.qi, 40, 'simultaneous parry and seal must not cast both');
 }
 
 {
@@ -123,7 +171,7 @@ function boot(saved) {
   assert(migrated.t.player.keyItems.has('sectbreaker_core'), 'legacy boss victory must grant its breakthrough key');
   assert(migrated.t.tutorial.attacked && migrated.t.tutorial.cultivated, 'legacy progress should complete the tutorial');
   assert.strictEqual(migrated.elements.get('quest').hidden, true, 'completed tutorial should hide guided objectives');
-  assert.strictEqual(JSON.parse(migrated.storage.get('verdant-star-save')).version, 5, 'legacy save should migrate to v5');
+  assert.strictEqual(JSON.parse(migrated.storage.get('verdant-star-save')).version, 6, 'legacy save should migrate to v6');
   assert.strictEqual(migrated.t.treasures.slice(0, 5).filter(cache => cache.opened).length, 5, 'old cache indices must remain intact');
 
   const allBosses = Object.fromEntries(migrated.t.bossDefs.map(boss => [boss.id, true]));
@@ -156,6 +204,13 @@ function boot(saved) {
   assert.strictEqual(t.breakthrough(), false, 'realm breakthrough must require its boss key');
   t.player.keyItems.add('verdant_antler');
   assert.strictEqual(t.breakthrough(), true); assert.strictEqual(t.player.realm, 1); assert(t.player.keyItems.has('verdant_antler'), 'boss keys must not be consumed');
+}
+
+{
+  const { t } = boot({ version: 5, discoveries: ['Crossroads Shrine', 'Mistglass Ravine'] });
+  assert(t.player.discoveredAreas.has('mistglass'), 'display-name discoveries must migrate to stable area IDs');
+  assert(t.player.discoveredLandmarks.has('crossroads'), 'Crossroads must remain a known minimap landmark at any distance');
+  t.taps.add('m'); t.handleActions(); assert.strictEqual(t.mapOpen, true, 'M / Map should expand the world map');
 }
 
 {
@@ -241,6 +296,14 @@ function boot(saved) {
   for (const fn of app.globalListeners.beforeunload || []) fn({});
   assert.strictEqual(app.storage.has('verdant-star-save'), false, 'unload must not recreate a cleared save');
   assert.strictEqual(app.reloads, 1);
+}
+
+{
+  const app = boot();
+  const menu = app.elements.get('settingsButton');
+  menu.dispatch('pointerdown', { pointerId: 20 }); app.advanceTime(1900); menu.dispatch('pointerup', { pointerId: 20 }); menu.dispatch('click');
+  assert.strictEqual(app.elements.get('devMenu').hidden, false, 'holding Menu should open the developer chamber on touch devices');
+  assert.strictEqual(app.elements.get('settingsMenu').hidden, true, 'the long-press click must not also open Settings');
 }
 
 {

@@ -9,7 +9,7 @@
   const WORLD_W = 144, WORLD_H = 108;
   const TAU = Math.PI * 2;
   const SAVE_KEY = 'verdant-star-save';
-  const SAVE_VERSION = 5;
+  const SAVE_VERSION = 6;
   const DASH_DISTANCE = 84;
   const DASH_BASE_COOLDOWN = .72;
   const DASH_MIN_COOLDOWN = .36;
@@ -25,7 +25,7 @@
 
   const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','caches','zone','time','quest','questText','messages','overlay','start','compass','compassArrow','compassText','interactPrompt','settingsButton','settingsMenu','closeSettings','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText'].map(id => [id, document.getElementById(id)]));
   const keys = new Set(), taps = new Set(), keyboardKeys = new Set(), touchPointers = new Map(), touchKeyCounts = new Map();
-  let started = false, paused = false, last = performance.now(), playTime = 0, shake = 0, flash = 0, runtimeErrorShown = false;
+  let started = false, paused = false, last = performance.now(), playTime = 0, shake = 0, flash = 0, runtimeErrorShown = false, mapOpen = false;
   let activeMenu = null, menuWasPaused = false, suppressSave = false, loadedSaveVersion = 0;
   const dev = { invulnerable: false, noCooldowns: false };
 
@@ -53,9 +53,13 @@
   for (let x = 116; x <= 119; x++) for (let d = -1; d <= 1; d++) map[48 + d][x] = 'path';
   for (let y = 30; y <= 42; y++) for (let x = 40; x <= 54; x++) if (Math.hypot(x - 47, y - 36) < 7) map[y][x] = 'grass';
   const landmarks = [
-    { x: 14, y: 13, type: 'vein' }, { x: 80, y: 13, type: 'vein' }, { x: 14, y: 58, type: 'vein' }, { x: 81, y: 57, type: 'vein' },
-    { x: 111, y: 18, type: 'vein' }, { x: 124, y: 48, type: 'vein' }, { x: 44, y: 88, type: 'vein' }, { x: 116, y: 88, type: 'vein' },
-    { x: 47, y: 36, type: 'shrine' }, { x: 47, y: 9, type: 'shrine' }, { x: 47, y: 63, type: 'shrine' }, { x: 116, y: 36, type: 'shrine' }, { x: 47, y: 88, type: 'shrine' }
+    { id: 'vein_nw', x: 14, y: 13, type: 'vein' }, { id: 'vein_ne', x: 80, y: 13, type: 'vein' },
+    { id: 'vein_sw', x: 14, y: 58, type: 'vein' }, { id: 'vein_se', x: 81, y: 57, type: 'vein' },
+    { id: 'vein_mistglass', x: 111, y: 18, type: 'vein' }, { id: 'vein_roots', x: 124, y: 48, type: 'vein' },
+    { id: 'vein_ember', x: 42, y: 84, type: 'vein' }, { id: 'vein_starfall', x: 110, y: 88, type: 'vein' },
+    { id: 'crossroads', x: 47, y: 36, type: 'shrine' }, { id: 'sword_grave_shrine', x: 47, y: 9, type: 'shrine' },
+    { id: 'south_shrine', x: 47, y: 63, type: 'shrine' }, { id: 'east_shrine', x: 116, y: 36, type: 'shrine' },
+    { id: 'kiln_shrine', x: 47, y: 88, type: 'shrine' }
   ];
   for (const l of landmarks) {
     for (let yy = l.y - 2; yy <= l.y + 2; yy++) for (let xx = l.x - 2; xx <= l.x + 2; xx++) map[yy][xx] = 'grass';
@@ -106,7 +110,7 @@
     qi: 0, maxQi: 80, xp: 0, xpNeed: 60, realm: 0, stage: 1, stones: 0, herbs: 0, kills: 0,
     attack: 16, attackCd: 0, attackTimer: 0, dashCd: 0, invuln: 0, talismanCd: 0,
     parryTimer: 0, parryCd: 0, parryRecovery: 0,
-    meditating: false, discoveries: new Set(['Crossroads Shrine']),
+    meditating: false, discoveries: new Set(['Crossroads Shrine']), discoveredAreas: new Set(), discoveredLandmarks: new Set(['crossroads']),
     ingredients: { cloud_dew: 0, lotus_seed: 0, root_resin: 0, cinder_marrow: 0 },
     keyItems: new Set()
   };
@@ -231,6 +235,11 @@
     return total;
   }
 
+  function qiCapacity(realm = player.realm, stage = player.stage) {
+    const path = realms[clamp(realm, 0, realms.length - 1)];
+    return path.qi + (clamp(stage, 1, path.stages) - 1) * Math.floor(path.qi * .3);
+  }
+
   function dashCooldownDuration() {
     const reductions = Math.min(10, cultivationAdvancements());
     return Math.max(DASH_MIN_COOLDOWN, DASH_BASE_COOLDOWN - reductions * DASH_COOLDOWN_STEP);
@@ -269,7 +278,7 @@
         x: player.x, y: player.y, hp: player.hp, qi: player.qi, maxQi: player.maxQi, maxHp: player.maxHp,
         xp: player.xp, xpNeed: player.xpNeed, realm: player.realm, stage: player.stage, stones: player.stones,
         herbs: player.herbs, kills: player.kills, attack: player.attack, quest, playTime,
-        discoveries: [...player.discoveries], treasures: treasures.map(t => t.opened),
+        discoveries: [...player.discoveries], discoveredAreas: [...player.discoveredAreas], discoveredLandmarks: [...player.discoveredLandmarks], treasures: treasures.map(t => t.opened),
         ingredients: { ...player.ingredients }, keyItems: [...player.keyItems], tutorial: { ...tutorial }, bosses: { ...bossStates },
         resourceReadyAt: Object.fromEntries(resourceNodes.filter(n => !n.ready).map(n => [n.id, Date.now() + Math.max(0, n.respawn) * 1000])),
         bossDefeated: bossStates.sectbreaker
@@ -286,6 +295,11 @@
       quest = Number.isFinite(d.quest) ? d.quest : 0;
       playTime = Number.isFinite(d.playTime) ? d.playTime : 0;
       if (Array.isArray(d.discoveries)) player.discoveries = new Set(d.discoveries);
+      if (Array.isArray(d.discoveredAreas)) player.discoveredAreas = new Set(d.discoveredAreas.filter(id => areas.some(a => a.id === id)));
+      else for (const area of areas) if (player.discoveries.has(area.name)) player.discoveredAreas.add(area.id);
+      if (Array.isArray(d.discoveredLandmarks)) player.discoveredLandmarks = new Set(d.discoveredLandmarks.filter(id => landmarks.some(l => l.id === id)));
+      player.discoveredLandmarks.add('crossroads');
+      for (const landmark of landmarks) if (areas.some(a => player.discoveredAreas.has(a.id) && Math.hypot(landmark.x - a.x, landmark.y - a.y) < a.r + 2)) player.discoveredLandmarks.add(landmark.id);
       // Version 2 could autosave a chest as opened before its reward threw an error.
       if (d.version >= 3 && Array.isArray(d.treasures)) d.treasures.forEach((opened, i) => { if (treasures[i]) treasures[i].opened = !!opened; });
       if (d.ingredients && typeof d.ingredients === 'object') for (const key of Object.keys(player.ingredients)) {
@@ -398,7 +412,7 @@
     player.stage++;
     if (player.stage > r.stages) { player.realm = Math.min(player.realm + 1, realms.length - 1); player.stage = 1; }
     const nr = realms[player.realm];
-    player.maxQi = nr.qi + (player.stage - 1) * Math.floor(nr.qi * .3);
+    player.maxQi = qiCapacity();
     player.maxHp += 18;
     player.hp = player.maxHp;
     player.attack += 5;
@@ -454,7 +468,7 @@
   }
 
   function useTalisman() {
-    if (player.talismanCd > 0) return;
+    if (player.talismanCd > 0 || player.parryTimer > 0 || player.parryRecovery > 0 || player.attackTimer > 0) return;
     if (player.qi < 20) { addMessage('You need 20 qi to cast a sword seal.', 'bad'); return; }
     player.qi -= 20; player.talismanCd = 2.2; shake = 5;
     for (const e of enemies) if (e.alive && dist(player, e) < 112) {
@@ -506,7 +520,7 @@
   }
 
   function dash(dx, dy) {
-    if (player.dashCd > 0 || player.meditating) return;
+    if (player.dashCd > 0 || player.meditating || player.parryTimer > 0 || player.parryRecovery > 0 || player.attackTimer > 0) return;
     if (!dx && !dy) { dx = Math.cos(player.facing); dy = Math.sin(player.facing); }
     const n = Math.hypot(dx, dy) || 1; dx /= n; dy /= n;
     const fromX = player.x, fromY = player.y;
@@ -524,10 +538,11 @@
   function handleActions() {
     const parryPressed = taps.has('f') || taps.has('l');
     if (parryPressed) parry();
-    if (!parryPressed && (taps.has(' ') || taps.has('j'))) attack();
-    if (taps.has('q')) useTalisman();
-    if (taps.has('e')) gather();
-    if (taps.has('c')) cultivate();
+    else if (taps.has(' ') || taps.has('j')) attack();
+    else if (taps.has('q')) useTalisman();
+    else if (taps.has('e')) gather();
+    else if (taps.has('c')) cultivate();
+    else if (taps.has('m')) mapOpen = !mapOpen;
     taps.clear();
   }
 
@@ -550,7 +565,7 @@
   }
 
   function resolveEnemyAttack(e, profile) {
-    if (e.attackLanded || !enemyAttackHits(e, profile)) return;
+    if (e.attackLanded || !enemyAttackHits(e, profile)) return false;
     e.attackLanded = true;
     if (player.invuln > 0 || dev.invulnerable) return;
     const parryAngle = Math.atan2(e.y - player.y, e.x - player.x);
@@ -559,14 +574,43 @@
       e.attackState = 'recovery'; e.attackTimer = profile.recovery; e.stagger = e.boss ? .42 : .85; e.riposteWindow = .9;
       player.parryTimer = 0; player.invuln = .12; shake = 5;
       burst(e.x, e.y, '#fff0a6', 16, 100); addMessage(`Parried ${e.title || enemyTypes[e.type].name}. Riposte now!`, 'good');
-      return;
+      return false;
     }
     player.hp -= profile.damage; player.invuln = .55; shake = e.boss ? 12 : 7;
     burst(player.x, player.y, '#e96961', 12, 95); addMessage(`${e.title || enemyTypes[e.type].name} strikes for ${profile.damage}.`, 'bad');
-    if (player.hp <= 0) {
-      player.hp = player.maxHp; player.qi = Math.floor(player.qi * .75); player.x = 47.5 * TILE; player.y = 39 * TILE;
-      addMessage('Your spirit returns to the Crossroads Shrine.', 'bad'); save();
-    }
+    if (player.hp <= 0) { handlePlayerDeath(); return true; }
+    return false;
+  }
+
+  function loseCultivationStage() {
+    if (player.realm === 0 && player.stage === 1) return false;
+    if (player.stage > 1) player.stage--;
+    else { player.realm--; player.stage = realms[player.realm].stages; }
+    player.maxHp = Math.max(100, player.maxHp - 18);
+    player.attack = Math.max(16, player.attack - 5);
+    player.maxQi = qiCapacity();
+    return true;
+  }
+
+  function resetLivingEnemiesAfterDeath() {
+    for (const e of enemies) if (e.alive) Object.assign(e, {
+      hp: e.maxHp, hit: 0, vx: 0, vy: 0, attackState: 'idle', attackTimer: 0,
+      attackLanded: false, stagger: 0, riposteWindow: 0, attackCd: .9
+    });
+  }
+
+  function handlePlayerDeath() {
+    const oldQi = player.qi, lostStage = loseCultivationStage();
+    player.qi = Math.min(player.maxQi, Math.floor(oldQi * .75));
+    player.hp = player.maxHp; player.x = 47.5 * TILE; player.y = 39 * TILE;
+    Object.assign(player, {
+      attackCd: 0, attackTimer: 0, dashCd: 0, invuln: 2, talismanCd: 0,
+      parryTimer: 0, parryCd: 0, parryRecovery: 0, meditating: false
+    });
+    resetLivingEnemiesAfterDeath();
+    addMessage(lostStage ? `Defeat scatters your foundation. You fall to ${realms[player.realm].name}, stage ${player.stage}.` : 'Your cultivation cannot fall below Mortal, stage 1.', 'bad');
+    addMessage('Your spirit returns to the Crossroads Shrine. Living foes recover.', 'bad');
+    save();
   }
 
   function updateEnemyCombat(e, profile, dt) {
@@ -579,7 +623,8 @@
     }
     if (e.attackState === 'active') {
       if (['lunge','thrust','arc'].includes(profile.kind)) moveEntity(e, Math.cos(e.attackAngle) * 145 * dt, Math.sin(e.attackAngle) * 145 * dt, enemyTypes[e.type].r);
-      resolveEnemyAttack(e, profile); e.attackTimer -= dt;
+      if (resolveEnemyAttack(e, profile)) return true;
+      e.attackTimer -= dt;
       if (e.attackTimer <= 0) { e.attackState = 'recovery'; e.attackTimer = profile.recovery; }
       return true;
     }
@@ -602,7 +647,8 @@
 
     let dx = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
     let dy = (keys.has('s') || keys.has('arrowdown') ? 1 : 0) - (keys.has('w') || keys.has('arrowup') ? 1 : 0);
-    const dashPressed = taps.has('shift') || taps.has('k');
+    const parryPressed = taps.has('f') || taps.has('l');
+    const dashPressed = !parryPressed && (taps.has('shift') || taps.has('k'));
     if (dx || dy) {
       const n = Math.hypot(dx, dy); dx /= n; dy /= n; player.facing = Math.atan2(dy, dx);
       if (!dashPressed) moveEntity(player, dx * player.speed * dt, dy * player.speed * dt, player.r);
@@ -640,7 +686,14 @@
     shake *= .86; flash = Math.max(0, flash - dt * 1.2);
 
     const zn = zoneName();
-    if (!player.discoveries.has(zn)) { player.discoveries.add(zn); addMessage(`Discovered: ${zn}`, 'good'); save(); }
+    let discoveredSomething = false;
+    if (!player.discoveries.has(zn)) { player.discoveries.add(zn); addMessage(`Discovered: ${zn}`, 'good'); discoveredSomething = true; }
+    const area = areas.find(a => Math.hypot(player.x / TILE - a.x, player.y / TILE - a.y) < a.r + 1);
+    if (area && !player.discoveredAreas.has(area.id)) { player.discoveredAreas.add(area.id); discoveredSomething = true; }
+    for (const landmark of landmarks) if (Math.hypot(player.x / TILE - landmark.x, player.y / TILE - landmark.y) < 6 && !player.discoveredLandmarks.has(landmark.id)) {
+      player.discoveredLandmarks.add(landmark.id); discoveredSomething = true;
+    }
+    if (discoveredSomething) save();
     if (reconcileQuestProgress()) save();
     if (Math.floor(playTime) % 12 === 0 && Math.floor((playTime - dt)) % 12 !== 0) save();
     updateUI();
@@ -730,6 +783,7 @@
   }
 
   function drawLandmarks(cam, time) {
+    ctx.lineWidth = 1;
     for (const l of landmarks) {
       if (l.type !== 'vein') continue;
       const s = screenPos((l.x + .5) * TILE, (l.y + .5) * TILE, cam);
@@ -737,18 +791,16 @@
       const g = ctx.createLinearGradient(0, s.y - 150, 0, s.y + 14);
       g.addColorStop(0, 'rgba(105,255,196,0)'); g.addColorStop(1, `rgba(105,255,196,${glow})`);
       ctx.fillStyle = g; ctx.fillRect(s.x - 18, s.y - 150, 36, 164);
-      ctx.strokeStyle = '#83f0c1aa'; ctx.strokeRect(s.x - 12, s.y - 12, 24, 24);
+      ctx.strokeStyle = '#83f0c1aa'; ctx.lineWidth = 1; ctx.strokeRect(s.x - 12, s.y - 12, 24, 24);
     }
     for (const a of areas) {
       const s = screenPos(a.x * TILE, a.y * TILE, cam);
       if (s.x < -100 || s.y < -100 || s.x > W + 100 || s.y > H + 100) continue;
-      ctx.fillStyle = '#080b10aa'; ctx.fillRect(s.x - 70, s.y - a.r * TILE + 8, 140, 17);
-      ctx.fillStyle = '#ead696'; ctx.font = '12px Georgia'; ctx.textAlign = 'center'; ctx.fillText(a.name, s.x, s.y - a.r * TILE + 21);
       if (a.icon === 'monastery' || a.icon === 'ruins') {
         ctx.fillStyle = a.icon === 'ruins' ? '#544a46' : '#704843';
         ctx.fillRect(s.x - 30, s.y - 20, 60, 36); ctx.fillStyle = '#302a2b'; ctx.fillRect(s.x - 36, s.y - 25, 72, 7);
         ctx.fillStyle = '#d2aa63'; ctx.fillRect(s.x - 4, s.y - 6, 8, 22);
-        if (a.icon === 'ruins') { ctx.clearRect(s.x + 12, s.y - 20, 9, 12); ctx.fillStyle = '#827263'; ctx.fillRect(s.x - 24, s.y - 32, 5, 12); }
+        if (a.icon === 'ruins') { ctx.fillStyle = '#242328'; ctx.fillRect(s.x + 12, s.y - 20, 9, 12); ctx.fillStyle = '#827263'; ctx.fillRect(s.x - 24, s.y - 32, 5, 12); }
       } else if (a.icon === 'swords') {
         ctx.strokeStyle = '#c4c9c5'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(s.x - 12,s.y - 24);ctx.lineTo(s.x + 10,s.y + 20);ctx.moveTo(s.x + 12,s.y - 24);ctx.lineTo(s.x - 10,s.y + 20);ctx.stroke();
       } else if (a.icon === 'lotus') {
@@ -763,6 +815,13 @@
         ctx.strokeStyle = '#9b89d4'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(s.x, s.y + 4, 30, 0, TAU); ctx.stroke(); ctx.fillStyle = '#e6ddff'; ctx.fillRect(s.x - 4, s.y - 22, 8, 34); ctx.fillRect(s.x - 13, s.y - 8, 26, 7);
       } else {
         ctx.fillStyle = '#6ca75a'; for (let i=0;i<5;i++) ctx.fillRect(s.x - 28 + i * 13, s.y - 32 - (i%2)*8, 4, 52);
+      }
+      const nearby = Math.hypot(player.x / TILE - a.x, player.y / TILE - a.y) < a.r + 5;
+      if (nearby || player.discoveredAreas.has(a.id)) {
+        const labelY = s.y - 52;
+        ctx.fillStyle = '#080b10e8'; ctx.fillRect(s.x - 92, labelY - 15, 184, 22);
+        ctx.strokeStyle = '#c9b77488'; ctx.lineWidth = 1; ctx.strokeRect(s.x - 92.5, labelY - 15.5, 185, 23);
+        ctx.fillStyle = '#f3dc9b'; ctx.font = 'bold 13px Georgia'; ctx.textAlign = 'center'; ctx.fillText(a.name, s.x, labelY);
       }
     }
     for (const t of treasures) {
@@ -833,20 +892,33 @@
   }
 
   function drawMinimap(cam) {
-    const mw = 126, mh = 88, x0 = W - mw - 14, y0 = H - mh - 15;
-    ctx.fillStyle = '#080c12d9'; ctx.fillRect(x0 - 5, y0 - 5, mw + 10, mh + 10); ctx.strokeStyle = '#cbb87866'; ctx.strokeRect(x0 - 5.5, y0 - 5.5, mw + 11, mh + 11);
-    for (let y = 0; y < WORLD_H; y += 3) for (let x = 0; x < WORLD_W; x += 3) {
-      const type = map[y][x]; ctx.fillStyle = colors[type]?.[0] || '#334'; ctx.fillRect(x0 + x / WORLD_W * mw, y0 + y / WORLD_H * mh, 4, 4);
+    const mw = mapOpen ? 520 : 176, mh = mapOpen ? 390 : 132;
+    const x0 = mapOpen ? (W - mw) / 2 : W - mw - 14, y0 = mapOpen ? (H - mh) / 2 : H - mh - 15;
+    // Keep the large map heading below the fixed HUD/compass overlays.
+    const mapY = mapOpen ? y0 + 56 : y0;
+    const mapH = mapOpen ? mh - 56 : mh;
+    ctx.lineWidth = 1; ctx.fillStyle = mapOpen ? '#05080cf2' : '#080c12e6'; ctx.fillRect(x0 - 7, mapOpen ? y0 - 7 : y0 - 25, mw + 14, mapOpen ? mh + 14 : mh + 32);
+    ctx.strokeStyle = '#d6c17c99'; ctx.lineWidth = 1; ctx.strokeRect(x0 - 7.5, mapOpen ? y0 - 7.5 : y0 - 25.5, mw + 15, mapOpen ? mh + 15 : mh + 33);
+    ctx.fillStyle = '#ead696'; ctx.font = 'bold 12px Georgia'; ctx.textAlign = mapOpen ? 'center' : 'left'; ctx.fillText(mapOpen ? 'KNOWN WORLD  \u00b7  M / Map to close' : 'WORLD  \u00b7  M / Map', mapOpen ? x0 + mw / 2 : x0, mapOpen ? y0 + 43 : y0 - 9);
+    const step = mapOpen ? 2 : 3;
+    for (let y = 0; y < WORLD_H; y += step) for (let x = 0; x < WORLD_W; x += step) {
+      const type = map[y][x]; ctx.fillStyle = colors[type]?.[0] || '#334';
+      ctx.fillRect(x0 + x / WORLD_W * mw, mapY + y / WORLD_H * mapH, Math.ceil(step / WORLD_W * mw), Math.ceil(step / WORLD_H * mapH));
     }
     for (const l of landmarks) {
-      const nearby = Math.hypot(l.x - player.x / TILE, l.y - player.y / TILE) < 10;
-      const inKnownArea = areas.some(a => player.discoveries.has(a.name) && Math.hypot(l.x - a.x, l.y - a.y) < a.r + 2);
-      if (!nearby && !inKnownArea) continue;
-      ctx.fillStyle = l.type === 'vein' ? '#73f0bd' : '#e8c76d'; ctx.fillRect(x0 + l.x / WORLD_W * mw - 2, y0 + l.y / WORLD_H * mh - 2, 5, 5);
+      if (!player.discoveredLandmarks.has(l.id)) continue;
+      const lx = x0 + l.x / WORLD_W * mw, ly = mapY + l.y / WORLD_H * mapH;
+      ctx.fillStyle = l.type === 'vein' ? '#73f0bd' : '#e8c76d';
+      if (l.type === 'vein') { ctx.fillRect(lx - 1, ly - 4, 3, 9); ctx.fillRect(lx - 4, ly - 1, 9, 3); }
+      else { ctx.beginPath(); ctx.moveTo(lx, ly - 5); ctx.lineTo(lx + 5, ly); ctx.lineTo(lx, ly + 5); ctx.lineTo(lx - 5, ly); ctx.closePath(); ctx.fill(); }
     }
-    for (const a of areas) if (player.discoveries.has(a.name)) { ctx.strokeStyle = '#f0d18b'; ctx.strokeRect(x0 + a.x / WORLD_W * mw - 2.5, y0 + a.y / WORLD_H * mh - 2.5, 5, 5); }
-    ctx.fillStyle = '#ffe18a'; ctx.fillRect(x0 + player.x / (WORLD_W * TILE) * mw - 2, y0 + player.y / (WORLD_H * TILE) * mh - 2, 5, 5);
-    ctx.strokeStyle = '#ffffff38'; ctx.strokeRect(x0 + cam.x / (WORLD_W * TILE) * mw, y0 + cam.y / (WORLD_H * TILE) * mh, W / (WORLD_W * TILE) * mw, H / (WORLD_H * TILE) * mh);
+    for (const a of areas) {
+      const known = player.discoveredAreas.has(a.id), ax = x0 + a.x / WORLD_W * mw, ay = mapY + a.y / WORLD_H * mapH;
+      ctx.strokeStyle = known ? '#f4d47f' : '#939aa4'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(ax, ay, 5, 0, TAU); ctx.stroke();
+      if (mapOpen && known) { ctx.fillStyle = '#fff0bc'; ctx.font = '11px Georgia'; ctx.textAlign = 'left'; ctx.fillText(a.name, ax + 7, ay + 4); }
+    }
+    ctx.fillStyle = '#fff3b0'; ctx.beginPath(); ctx.arc(x0 + player.x / (WORLD_W * TILE) * mw, mapY + player.y / (WORLD_H * TILE) * mapH, 3.5, 0, TAU); ctx.fill();
+    ctx.lineWidth = 1; ctx.strokeStyle = '#ffffff55'; ctx.strokeRect(x0 + cam.x / (WORLD_W * TILE) * mw, mapY + cam.y / (WORLD_H * TILE) * mapH, W / (WORLD_W * TILE) * mw, H / (WORLD_H * TILE) * mapH);
   }
 
   function draw(timeMs) {
@@ -941,8 +1013,8 @@
 
   const travelTargets = {
     crossroads: [47, 39], 'vein-nw': [14, 13], 'vein-ne': [80, 13], 'vein-sw': [14, 58], 'vein-se': [81, 57],
-    grove: [18, 12], monastery: [77, 15], mere: [17, 56], grave: [47, 9], ruins: [78, 56],
-    mistglass: [116, 18], roots: [119, 48], kiln: [44, 88], starfall: [116, 88]
+    grove: [18, 29], monastery: [77, 30], mere: [17, 41], grave: [47, 15], ruins: [78, 41],
+    mistglass: [116, 31], roots: [116, 42], kiln: [47, 78], starfall: [116, 77]
   };
 
   function runDevAction(action) {
@@ -1078,7 +1150,19 @@
   document.getElementById('touch').addEventListener('contextmenu', e => e.preventDefault());
   document.getElementById('touch').addEventListener('selectstart', e => e.preventDefault());
   document.getElementById('touch').addEventListener('dragstart', e => e.preventDefault());
-  ui.settingsButton.addEventListener('click', () => openMenu('settings'));
+  let menuHoldStarted = null, suppressMenuClick = false;
+  ui.settingsButton.addEventListener('pointerdown', () => { menuHoldStarted = performance.now(); suppressMenuClick = false; });
+  ui.settingsButton.addEventListener('pointerup', e => {
+    if (menuHoldStarted !== null && performance.now() - menuHoldStarted >= 1800) {
+      e.preventDefault(); suppressMenuClick = true; openMenu('dev');
+    }
+    menuHoldStarted = null;
+  });
+  ui.settingsButton.addEventListener('pointercancel', () => { menuHoldStarted = null; });
+  ui.settingsButton.addEventListener('click', e => {
+    if (suppressMenuClick) { e.preventDefault(); suppressMenuClick = false; return; }
+    openMenu('settings');
+  });
   ui.closeSettings.addEventListener('click', closeMenu);
   ui.closeDev.addEventListener('click', closeMenu);
   ui.clearProgress.addEventListener('click', () => { ui.clearConfirm.hidden = false; ui.confirmClear.focus(); });
@@ -1096,7 +1180,7 @@
     const travelButton = e.target.closest('[data-dev-travel]');
     if (!travelButton) return;
     const target = travelTargets[travelButton.dataset.devTravel];
-    if (target && safeTeleport(target[0], target[1])) { updateUI(); updateDevStatus(); save(); }
+    if (target && safeTeleport(target[0], target[1])) { player.invuln = Math.max(player.invuln, 2); updateUI(); updateDevStatus(); save(); }
   });
   ui.start.addEventListener('click', () => { started = true; ui.overlay.hidden = true; canvas.focus(); addMessage('The Verdant Star stirs above the silent sect.', 'good'); updateUI(); });
   addEventListener('beforeunload', () => { if (!suppressSave) save(); });
