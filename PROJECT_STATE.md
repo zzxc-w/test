@@ -41,7 +41,7 @@ _Last updated: 2026-09-09. Verify this summary against the current branch, `git 
 
 ## Current state / known issues
 
-- Sanctuary, storage, and skill features are implemented on `feature/crossroads-sanctuary`; syntax, 50 focused system tests, gameplay smoke tests, and multiplayer client tests pass. Browser QA covered interior rendering, chest deposit/count updates, tutor costs/prerequisites, and the narrow layout.
+- Sanctuary, storage, and skill features are deployed on `main`; `feature/crossroads-sanctuary` is retained for review/history. Syntax, 50 focused system tests, gameplay smoke tests, and multiplayer client tests pass. Browser QA covered interior rendering, chest deposit/count updates, tutor costs/prerequisites, and the narrow layout.
 - Sanctuary NPC storylines, alchemy, formation work, forging, training-dummy lessons, item crafting, and most tutor inventories remain intentional placeholders.
 - Ember Palm is the only active learned art currently wired to combat. Gale Step, Flowing Guard, and Iron Root are passive; iron ore has no source yet.
 - Saves and personal storage remain local and editable. Shared drops are cooperative rather than cheat-proof; do not build a valuable economy before server-side identity/inventory exists.
@@ -62,7 +62,7 @@ _Last updated: 2026-09-09. Verify this summary against the current branch, `git 
 
 ## Next steps
 
-1. Publish and touch-test the sanctuary entrance, room navigation, chest withdrawal with a full backpack, well/rest actions, and each tutor on the live site.
+1. Touch-test the sanctuary entrance, room navigation, chest withdrawal with a full backpack, well/rest actions, and each tutor on the live site.
 2. Design NPC story arcs and stable quest flags before replacing placeholder dialogue/services.
 3. Add real iron ore acquisition, blacksmith crafting/upgrades, alchemy/formation services, and more active cultivation moves with distinct animations.
 4. Incrementally split `game.js` before several collaborators add overlapping story/area systems.
