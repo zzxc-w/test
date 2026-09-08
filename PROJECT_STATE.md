@@ -11,7 +11,7 @@ The project is a dependency-free static site:
 - `index.html` contains the page structure, CSS, HUD, name setup, settings/dev/inventory/dialogue/shop dialogs, responsive touch controls, multiplayer shell, and a fixed 960x540 canvas. It loads dependency-free system and multiplayer modules before `game.js?v=11`.
 - `game.js` is a single IIFE containing game data, deterministic world generation, input, update/render loops, combat, exploration, progression, quests, and save/load logic.
 - `systems/` contains dependency-free browser/CommonJS domain modules for spatial equipment, keybindings, branching dialogue, transactional shops, and cultivation recipes.
-- `multiplayer/` is an optional dependency-free browser client for presence, challenges, and isolated arena play.
+- `multiplayer/` is an optional dependency-free browser client for presence, transient shared equipment drops, challenges, and isolated arena play.
 - `server/` is a Cloudflare Worker using SQLite Durable Objects for the shared world and server-authoritative duel rooms.
 - Graphics are drawn procedurally with Canvas 2D; smoothing is disabled for a pixel-art look.
 - There is no framework, package manager, build step, backend, account system, or asset pipeline.
@@ -33,8 +33,9 @@ The project is a dependency-free static site:
 - Autosave and frame-level error recovery.
 - A settings dialog with a two-step, game-save-only progress reset, plus a non-persistent hidden developer test chamber opened with `Ctrl+Shift+Alt+D`.
 - GitHub Pages deployment from `main`. The workflow syntax-checks `game.js`, runs dependency-free smoke tests, uploads the static repository, and deploys it.
-- A 6×5 spatial backpack with weapon/armor/pendant slots, starter gear, safe save repair, four weapon identities (sword, spear, dual swords, greatsword), matching build sets, and two-piece bonuses.
+- A 6×5 single-cell backpack with weapon/armor/pendant slots, starter gear, safe full-bag equip swaps, explicit dropping, four weapon identities (sword, spear, dual swords, greatsword), matching build sets, and two-piece bonuses.
 - Equipment modifies solo combat reach, cadence, damage, defence, movement, parry timing, dash timing, health, qi gain, and procedural weapon visuals. Enemies can drop gear; bosses have guaranteed themed drops.
+- Online equipment drops are visible shard-wide for five minutes and use server-assigned positions/IDs, an item allowlist, distance-checked atomic claims, and rate/quantity limits. Offline drops remain local and interactable.
 - Quartermaster Lian at Crossroads provides branching dialogue and sells every current gear piece for spirit stones. Dialogue, shop, and cultivation recipe logic is reusable for later NPCs, story conditions, and areas.
 - Remappable keyboard actions in Settings, persisted with the save; touch controls remain semantic and fixed-position.
 - Collaboration documentation in `README.md`, `CONTRIBUTING.md`, and `AGENTS.md`.
@@ -50,6 +51,7 @@ The project is a dependency-free static site:
 - Version 7 stores one validated 1–20 character cultivator name in the main save. Unnamed legacy saves receive one choice on the title screen; the name is locked until progress is cleared.
 - Version 8 adds sanitized equipment and keybinding state. Older or malformed saves receive starter sword/robes without losing existing progression.
 - Equipment affects only the solo world. Arena builds stay normalized until multiplayer progression has server-side identity and storage.
+- Shared drop ownership is cooperative, not cheat-proof: equipment saves are local and editable, while the Worker only validates allowed item IDs and owns drop placement/lifetime/claiming. Do not build a valuable economy on it before server-side accounts/inventory exist.
 - Arena rendering is frame-rate-driven rather than packet-driven: local movement/actions are predicted, opponents interpolate through a 75 ms buffer, and authoritative snapshots reconcile drift. The server still owns positions, hits, damage, and cooldown validity.
 - Cultivation belongs near the green spirit veins, not at shrines or the sword-grave/cross landmark.
 - Preserve all legacy world coordinates when expanding the map. Append areas/caches instead of reordering them so old positions and cache-save indices remain valid.
@@ -83,17 +85,18 @@ The project is a dependency-free static site:
 - Rebuilt arena presentation around pixel cultivators, HP/cooldown HUD, combat telegraphs, touch-safe edge-buffered actions, hit/parry/dash feedback, knockback, body separation, reliable final-state delivery, an explicit leave control, and a stalled-snapshot watchdog.
 - Replaced generated multiplayer aliases with a permanent per-save name chosen once on the title screen; resetting progress removes the legacy alias and returns to name creation.
 - Shared-world players now render as colored pixel cultivators with swords and transient attack, parry, and dash animations instead of cyan rectangles.
+- Replaced multi-cell item footprints with uniform one-item/one-slot inventory cells, added stat-only item descriptions, made full-bag equipment swaps atomic, and redrew local weapon sprites in facing-relative coordinates.
 
 ## Current state and known issues
 
 - Multiplayer v1 is live on GitHub Pages: cosmetic shared-world presence, proximity challenges, a separate normalized server-authoritative arena, reconnect handling, and iPad arena controls. Staging and production Workers are deployed, and `index.html` uses the production endpoint.
 - Equipment builds, Quartermaster Lian, remappable controls, reusable interaction systems, and arena prediction are live from commit `3c28088`; Pages run `34211870430` completed successfully and the live site serves `game.js?v=11` / `arena.js?v=3`.
-- Low-latency arena protocol support is deployed to staging (Worker version `7b489a5f-2bef-4a94-bbad-1a552e2f6de5`) and production (`9f7d8115-aa85-4864-ba67-434fb5a5cb3f`); both passed the live two-client test before the browser client was published.
+- Shared-drop protocol support is deployed to staging (Worker version `55cbc2f7-9a4a-46a1-9396-7067b45d03b1`) and production (`96bb0bf3-ce73-43b2-8499-fc6a0316155d`); both passed live presence, shared-drop, arena, and reconnect tests before the browser client was published.
 - Multiplayer and arena state is deliberately excluded from `verdant-star-save`; the solo simulation pauses during a duel and remains the fail-open fallback.
 - Browser-client tests, 27 Worker protocol/simulation/security/lifecycle tests, 23 focused system tests, the gameplay smoke suite, and browser integration checks pass. Automated live tests passed against staging and production for health, two-client presence, challenge acceptance, isolated arena admission/input, and reconnect. A local narrow-viewport browser pass covered inventory, remapping, dialogue, and shop rendering.
 - CI performs JavaScript syntax validation and dependency-free migration, progression, combat, dash, reset, and touch-state smoke tests, but still lacks full real-browser interaction coverage. Test desktop and touch behavior manually after major UI or input changes.
 - `game.js` and the inline CSS are monolithic. Concurrent broad edits are likely to conflict; use small branches/PRs and avoid assigning two people overlapping sections of `game.js`.
-- Equipment placement is click-to-select/equip rather than drag-and-drop; the spatial model already supports safe movement, so drag UI can be added later without changing save format.
+- Equipment is click-to-select/equip/drop rather than drag-and-drop. Every definition is now one cell, while saved x/y positions remain compatible with version 8 saves.
 - `main` was unprotected at the last check. `hydrogendesigns` currently resolves to read access, which likely means the collaborator invitation has not yet been accepted.
 - This task's local working folder was not a Git checkout, so uncommitted work on another person's machine cannot be represented here.
 

@@ -23,10 +23,11 @@
     return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
   };
 
-  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','caches','zone','time','quest','questText','messages','overlay','start','compass','compassArrow','compassText','interactPrompt','settingsButton','multiplayerButton','settingsMenu','closeSettings','settingsControls','settingsProgress','keybindList','resetKeybinds','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText','inventoryMenu','closeInventory','equipmentSlots','equipmentStats','bagGrid','bagCount','itemDetail','equipItem','unequipItem','dialogueMenu','closeDialogue','dialogueSpeaker','dialogueText','dialogueChoices','shopPanel','shopBalance','shopGrid','playerNameLabel','nameSetup','playerNameInput','nameError','returningName'].map(id => [id, document.getElementById(id)]));
+  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','caches','zone','time','quest','questText','messages','overlay','start','compass','compassArrow','compassText','interactPrompt','settingsButton','multiplayerButton','settingsMenu','closeSettings','settingsControls','settingsProgress','keybindList','resetKeybinds','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText','inventoryMenu','closeInventory','equipmentSlots','equipmentStats','bagGrid','bagCount','itemDetail','equipItem','unequipItem','dropItem','dialogueMenu','closeDialogue','dialogueSpeaker','dialogueText','dialogueChoices','shopPanel','shopBalance','shopGrid','playerNameLabel','nameSetup','playerNameInput','nameError','returningName'].map(id => [id, document.getElementById(id)]));
   const keys = new Set(), taps = new Set(), keyboardKeys = new Set(), touchPointers = new Map(), touchKeyCounts = new Map();
   let started = false, paused = false, last = performance.now(), playTime = 0, shake = 0, flash = 0, runtimeErrorShown = false, mapOpen = false;
   let activeMenu = null, menuWasPaused = false, suppressSave = false, loadedSaveVersion = 0, playerName = '', remappingAction = null, selectedItemUid = null, dialogueSession = null;
+  const pendingSharedDrops = new Map(), pendingDropClaims = new Map(), claimingDropIds = new Set();
   const dev = { invulnerable: false, noCooldowns: false };
   const multiplayerApi = globalThis.VerdantMultiplayer || null;
   const equipmentApi = globalThis.EquipmentSystem;
@@ -326,8 +327,18 @@
       onInput: input => multiplayer.arena.setInput(input, true)
     });
     multiplayer.subscribe((event, detail) => {
-      if (event === 'status') updateMultiplayerStatus();
+      if (event === 'status') {
+        updateMultiplayerStatus();
+        if (detail?.status !== 'online') {
+          pendingSharedDrops.clear(); pendingDropClaims.clear(); claimingDropIds.clear();
+          if (activeMenu === 'inventory') renderInventory();
+        }
+      }
       if (event === 'online') addMessage('Joined the shared cultivation world.', 'good');
+      if (event === 'drop_created') finishSharedDrop(detail);
+      if (event === 'drop_award') receiveSharedDrop(detail);
+      if (event === 'drop_rejected') rejectSharedDrop(detail);
+      if (event === 'drop_spawn') addMessage('Another cultivator left equipment nearby.');
       if (event === 'arena_online') arenaOverlay?.setConnectionState?.('online');
       if (event === 'arena_reconnecting') arenaOverlay?.setConnectionState?.('reconnecting');
     });
@@ -730,8 +741,82 @@
   }
 
   function interact() {
+    const localGear = pickups.filter(p => p.type === 'gear' && dist(player, p) < 52).sort((a, b) => dist(player, a) - dist(player, b))[0];
+    if (localGear) { collectGroundGear(localGear); return; }
+    const shared = multiplayer?.status === 'online' ? multiplayer.drops.nearby(player.x, player.y, 52, Date.now()).find(drop => !claimingDropIds.has(drop.id)) : null;
+    if (shared) { claimSharedDrop(shared); return; }
     if (dist(player, merchant) < 58) { openMerchant(); return; }
     gather();
+  }
+
+  function spawnLocalGear(itemId, x = player.x, y = player.y) {
+    if (!equipmentApi.getDefinition(itemId)) return false;
+    pickups.push({ x, y, type: 'gear', itemId, life: 300, bob: hash(Math.floor(x), Math.floor(y), pickups.length + 73) * TAU });
+    return true;
+  }
+
+  function collectGroundGear(drop) {
+    const added = equipmentApi.addItem(equipment, drop.itemId);
+    if (!added.ok) { addMessage('Your backpack is full. Free a slot first.', 'bad'); return false; }
+    drop.life = 0; selectedItemUid = added.item.uid; addMessage(`Picked up ${equipmentApi.getDefinition(drop.itemId).name}.`, 'good');
+    save(); updateUI(); return true;
+  }
+
+  function claimSharedDrop(drop) {
+    if (!equipmentApi.firstOpenPosition(equipment, drop.itemId)) { addMessage('Your backpack is full. Free a slot first.', 'bad'); return; }
+    const requestId = multiplayer.claimDrop(drop.id);
+    if (!requestId) { addMessage('That item could not be claimed while offline.', 'bad'); return; }
+    pendingDropClaims.set(requestId, drop.id); claimingDropIds.add(drop.id);
+  }
+
+  function finishSharedDrop(message) {
+    const uid = pendingSharedDrops.get(message?.requestId);
+    if (!uid) return;
+    pendingSharedDrops.delete(message.requestId);
+    const removed = equipmentApi.removeItem(equipment, uid, { allowEquipped: true });
+    if (removed.ok) {
+      selectedItemUid = null; player.hp = Math.min(player.hp, effectiveMaxHp());
+      addMessage(`Dropped ${equipmentApi.getDefinition(removed.item.itemId).name} into the shared world.`, 'good'); save();
+    }
+    renderInventory(); updateUI();
+  }
+
+  function receiveSharedDrop(message) {
+    const dropId = pendingDropClaims.get(message?.requestId), drop = message?.drop;
+    if (dropId) { pendingDropClaims.delete(message.requestId); claimingDropIds.delete(dropId); }
+    if (!drop || !equipmentApi.getDefinition(drop.itemId)) return;
+    const added = equipmentApi.addItem(equipment, drop.itemId);
+    if (!added.ok) {
+      spawnLocalGear(drop.itemId, player.x, player.y);
+      addMessage('Your backpack changed while claiming; the item was placed at your feet.', 'bad');
+    } else {
+      selectedItemUid = added.item.uid; addMessage(`Claimed ${equipmentApi.getDefinition(drop.itemId).name}.`, 'good');
+    }
+    save(); updateUI();
+  }
+
+  function rejectSharedDrop(message) {
+    const uid = pendingSharedDrops.get(message?.requestId);
+    if (uid) { pendingSharedDrops.delete(message.requestId); addMessage('The shared world rejected that drop. Your item was kept.', 'bad'); renderInventory(); }
+    const dropId = pendingDropClaims.get(message?.requestId);
+    if (dropId) { pendingDropClaims.delete(message.requestId); claimingDropIds.delete(dropId); if (message.reason !== 'not_found') addMessage('That item could not be claimed.', 'bad'); }
+  }
+
+  function dropSelectedItem() {
+    const item = equipmentApi.itemByUid(equipment, selectedItemUid);
+    if (!item || [...pendingSharedDrops.values()].includes(item.uid)) return;
+    const definition = equipmentApi.getDefinition(item.itemId);
+    if (multiplayer?.status === 'online') {
+      const requestId = multiplayer.createDrop(item.itemId);
+      if (!requestId) { addMessage('The item could not be dropped while reconnecting.', 'bad'); return; }
+      pendingSharedDrops.set(requestId, item.uid); renderInventory(); return;
+    }
+    const removed = equipmentApi.removeItem(equipment, item.uid, { allowEquipped: true });
+    if (!removed.ok) return;
+    const x = clamp(player.x + Math.cos(player.facing) * 28, player.r, WORLD_W * TILE - player.r);
+    const y = clamp(player.y + Math.sin(player.facing) * 28, player.r, WORLD_H * TILE - player.r);
+    spawnLocalGear(removed.item.itemId, x, y); selectedItemUid = null; player.hp = Math.min(player.hp, effectiveMaxHp());
+    addMessage(`Dropped ${definition.name}.`, 'good'); save(); renderInventory(); updateUI();
   }
 
   function openMerchant() {
@@ -762,7 +847,7 @@
     for (const offer of merchantShop.list()) {
       const definition = equipmentApi.getDefinition(offer.itemId), button = document.createElement('button');
       button.type = 'button'; button.className = 'shop-item';
-      button.innerHTML = `<strong>${definition.name} · ${offer.total} stones</strong><small>${definition.build.replace('_', ' ')} ${definition.slot} · ${definition.description}</small>`;
+      button.innerHTML = `<strong>${definition.name} · ${offer.total} stones</strong><small>${definition.slot} · ${itemSummary(definition)}</small>`;
       button.addEventListener('click', () => {
         const result = merchantShop.buy(offer.itemId, 1);
         if (!result.ok) addMessage(result.code === 'insufficient_funds' ? 'You do not have enough spirit stones.' : result.code === 'inventory_full' ? 'Your backpack has no room for that item.' : 'The trade could not be completed.', 'bad');
@@ -936,7 +1021,7 @@
 
     for (const p of plants) if (!p.ready) { p.respawn -= dt; if (p.respawn <= 0) p.ready = true; }
     for (const node of resourceNodes) if (!node.ready) { node.respawn -= dt; if (node.respawn <= 0) node.ready = true; }
-    for (const p of pickups) { p.life -= dt; if (dist(player, p) < 21) { p.life = 0; player.stones++; player.qi = Math.min(player.maxQi, player.qi + 4); addMessage('Absorbed a spirit stone.', 'good'); } }
+    for (const p of pickups) { p.life -= dt; if (p.type === 'stone' && dist(player, p) < 21) { p.life = 0; player.stones++; player.qi = Math.min(player.maxQi, player.qi + 4); addMessage('Absorbed a spirit stone.', 'good'); } }
     pickups = pickups.filter(p => p.life > 0);
     for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= .94; p.vy *= .94; p.life -= dt; }
     particles = particles.filter(p => p.life > 0); slashes.forEach(s => s.life -= dt); slashes = slashes.filter(s => s.life > 0);
@@ -986,12 +1071,15 @@
       if (!tutorial.cultivated) lessons.push(`Follow the spirit compass to a green vein and press <em>${bindingLabel('cultivate')}</em> to cultivate.`);
       ui.questText.innerHTML = lessons.join('<br>');
     }
+    const nearLocalGear = pickups.find(p => p.type === 'gear' && dist(player, p) < 52);
+    const nearSharedGear = multiplayer?.status === 'online' && multiplayer.drops.nearby(player.x, player.y, 52, Date.now()).find(drop => !claimingDropIds.has(drop.id));
     const nearMerchant = dist(player, merchant) < 58;
     const nearbyChest = treasures.find(t => !t.opened && dist(player, t) < 58);
     const nearbyNode = resourceNodes.find(n => n.ready && dist(player, n) < 42);
     const nearbyHerb = plants.find(p => p.ready && dist(player, p) < 42);
     let prompt = '';
-    if (nearMerchant) prompt = `${bindingLabel('interact')} \u00b7 Speak with ${merchant.name}`;
+    if (nearLocalGear || nearSharedGear) prompt = `${bindingLabel('interact')} \u00b7 Pick up ${equipmentApi.getDefinition((nearLocalGear || nearSharedGear).itemId)?.name || 'equipment'}`;
+    else if (nearMerchant) prompt = `${bindingLabel('interact')} \u00b7 Speak with ${merchant.name}`;
     else if (nearbyChest) prompt = `${bindingLabel('interact')} \u00b7 Open ancient cache`;
     else if (nearbyNode) prompt = `${bindingLabel('interact')} \u00b7 Gather ${itemDefs[nearbyNode.item].name}`;
     else if (nearbyHerb) prompt = `${bindingLabel('interact')} \u00b7 Gather glowing moonleaf`;
@@ -1149,6 +1237,35 @@
     if (e.boss && (dist(player, e) < 230 || e.hp < e.maxHp)) { ctx.fillStyle = '#f0c96f'; ctx.font = '12px Georgia'; ctx.textAlign = 'center'; ctx.fillText(e.title, s.x, s.y - t.r - 17); }
   }
 
+  function drawEquippedWeapon(s, style) {
+    const attacking = player.attackTimer > 0;
+    const swing = attacking && style !== 'spear' ? -0.72 + (1 - clamp(player.attackTimer / .28, 0, 1)) * 1.45 : 0;
+    const thrust = attacking && style === 'spear' ? 6 : 0;
+    ctx.save(); ctx.translate(Math.round(s.x), Math.round(s.y)); ctx.rotate(player.facing + swing);
+    if (style === 'unarmed') {
+      ctx.fillStyle = '#e7bf69'; ctx.fillRect(7, -5, 5, 4); ctx.fillRect(7, 2, 5, 4);
+    } else if (style === 'spear') {
+      ctx.fillStyle = '#815b38'; ctx.fillRect(4 + thrust, -1, 25, 3);
+      ctx.fillStyle = '#e2e8e4'; ctx.beginPath(); ctx.moveTo(29 + thrust, -4); ctx.lineTo(38 + thrust, 0); ctx.lineTo(29 + thrust, 4); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#b8c9c1'; ctx.fillRect(28 + thrust, -2, 5, 4);
+    } else if (style === 'dual_swords') {
+      for (const side of [-1, 1]) {
+        ctx.fillStyle = '#7b5435'; ctx.fillRect(4, side * 5 - 1, 7, 3);
+        ctx.fillStyle = '#e3e9e6'; ctx.fillRect(10, side * 5 - 2, 15, 4);
+        ctx.fillStyle = '#a8b8b2'; ctx.fillRect(23, side * 5 - 1, 4, 2);
+      }
+    } else if (style === 'greatsword') {
+      ctx.fillStyle = '#765139'; ctx.fillRect(3, -2, 9, 5); ctx.fillStyle = '#d9b961'; ctx.fillRect(10, -6, 3, 12);
+      ctx.fillStyle = '#aeb9bd'; ctx.beginPath(); ctx.moveTo(12, -5); ctx.lineTo(30, -5); ctx.lineTo(37, 0); ctx.lineTo(30, 5); ctx.lineTo(12, 5); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#dce3e3'; ctx.fillRect(15, -3, 16, 2);
+    } else {
+      ctx.fillStyle = '#765139'; ctx.fillRect(4, -2, 8, 4); ctx.fillStyle = '#d9b961'; ctx.fillRect(10, -5, 3, 10);
+      ctx.fillStyle = '#dce4e1'; ctx.beginPath(); ctx.moveTo(12, -3); ctx.lineTo(29, -3); ctx.lineTo(34, 0); ctx.lineTo(29, 3); ctx.lineTo(12, 3); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#a9bbb5'; ctx.fillRect(15, 1, 14, 2);
+    }
+    ctx.restore();
+  }
+
   function drawPlayer(cam) {
     const s = screenPos(player.x, player.y, cam), blink = player.invuln > 0 && Math.floor(playTime * 18) % 2;
     if (blink) ctx.globalAlpha = .45;
@@ -1158,14 +1275,7 @@
     ctx.fillStyle = '#151d27'; ctx.fillRect(s.x - 7, s.y - 14, 14, 4); ctx.fillRect(s.x - 4, s.y - 17, 8, 4);
     ctx.fillStyle = '#bd574e'; ctx.fillRect(s.x - 8, s.y, 16, 6); ctx.fillStyle = '#e7bf69'; ctx.fillRect(s.x - 1, s.y, 2, 7);
     const fx = Math.cos(player.facing), fy = Math.sin(player.facing);
-    const style = derivedCombatStats().weaponStyle;
-    ctx.fillStyle = style === 'greatsword' ? '#b7c0c5' : '#d9e2de';
-    if (style === 'spear') {
-      ctx.fillStyle = '#9b7147'; ctx.fillRect(Math.round(s.x + fx * 2 - 1), Math.round(s.y + fy * 2 - 1), 3 + Math.abs(fx) * 19, 3 + Math.abs(fy) * 19);
-      ctx.fillStyle = '#e4e9e5'; ctx.fillRect(Math.round(s.x + fx * 21 - 2), Math.round(s.y + fy * 21 - 2), 5, 5);
-    } else if (style === 'dual_swords') {
-      for (const side of [-1, 1]) ctx.fillRect(Math.round(s.x + fx * 9 - fy * side * 4 - 1), Math.round(s.y + fy * 9 + fx * side * 4 - 1), 3 + Math.abs(fx) * 8, 3 + Math.abs(fy) * 8);
-    } else ctx.fillRect(Math.round(s.x + fx * 9 - (style === 'greatsword' ? 2 : 1)), Math.round(s.y + fy * 9 - (style === 'greatsword' ? 2 : 1)), (style === 'greatsword' ? 5 : 3) + Math.abs(fx) * (style === 'greatsword' ? 12 : 8), (style === 'greatsword' ? 5 : 3) + Math.abs(fy) * (style === 'greatsword' ? 12 : 8));
+    drawEquippedWeapon(s, derivedCombatStats().weaponStyle);
     if (player.parryTimer > 0) {
       ctx.strokeStyle = '#fff0a6'; ctx.lineWidth = 4; ctx.beginPath();
       ctx.arc(s.x + fx * 7, s.y + fy * 7, 20, player.facing - 1.05, player.facing + 1.05); ctx.stroke();
@@ -1214,7 +1324,8 @@
     drawMerchant(cam, time);
     plants.forEach(p => drawPlant(p, cam, time));
     resourceNodes.forEach(node => drawResourceNode(node, cam, time));
-    pickups.forEach(p => { const s = screenPos(p.x, p.y, cam), b = Math.sin(time * 5 + p.bob) * 3; ctx.fillStyle = '#07110eaa'; ctx.fillRect(s.x - 6, s.y + 6, 12, 3); ctx.fillStyle = '#79e1b7'; ctx.fillRect(s.x - 4, s.y - 5 + b, 8, 9); ctx.fillStyle = '#c8ffe9'; ctx.fillRect(s.x - 1, s.y - 3 + b, 3, 4); });
+    pickups.forEach(p => { const s = screenPos(p.x, p.y, cam), b = Math.sin(time * 5 + p.bob) * 3; ctx.fillStyle = '#07110eaa'; ctx.fillRect(s.x - 6, s.y + 6, 12, 3); if (p.type === 'gear') { ctx.fillStyle = '#d2ab58'; ctx.fillRect(s.x - 5, s.y - 6 + b, 10, 11); ctx.fillStyle = '#fff0aa'; ctx.fillRect(s.x - 2, s.y - 8 + b, 4, 4); } else { ctx.fillStyle = '#79e1b7'; ctx.fillRect(s.x - 4, s.y - 5 + b, 8, 9); ctx.fillStyle = '#c8ffe9'; ctx.fillRect(s.x - 1, s.y - 3 + b, 3, 4); } });
+    if (multiplayer && !multiplayer.arena.active) multiplayerApi.drawWorldDrops(ctx, multiplayer.listDrops(Date.now()), { camera: cam, now: Date.now() });
     if (multiplayer && !multiplayer.arena.active) multiplayerApi.drawRemotePlayers(ctx, multiplayer.presence.getRenderable(Date.now()), { camera: cam, now: Date.now() });
     enemies.slice().sort((a,b)=>a.y-b.y).forEach(e => drawEnemy(e, cam, time));
     drawPlayer(cam);
@@ -1247,13 +1358,16 @@
 
   function itemSummary(definition) {
     const stats = definition.stats || {}, parts = [];
-    if (stats.damageMultiplier && stats.damageMultiplier !== 1) parts.push(`${Math.round((stats.damageMultiplier - 1) * 100)}% damage`);
-    if (stats.attackCooldownMultiplier && stats.attackCooldownMultiplier !== 1) parts.push(`${Math.round((1 - stats.attackCooldownMultiplier) * 100)}% attack speed`);
+    if (definition.slot === 'weapon') parts.push(`${Math.round((stats.damageMultiplier || 1) * 100)}% damage`, `${Math.round(100 / (stats.attackCooldownMultiplier || 1))}% attack speed`);
     if (stats.reachBonus) parts.push(`${stats.reachBonus > 0 ? '+' : ''}${stats.reachBonus} reach`);
     if (stats.defense) parts.push(`${Math.round(stats.defense * 100)}% defence`);
     if (stats.maxHpBonus) parts.push(`+${stats.maxHpBonus} health`);
-    if (stats.moveSpeedMultiplier && stats.moveSpeedMultiplier !== 1) parts.push(`${Math.round((stats.moveSpeedMultiplier - 1) * 100)}% movement`);
-    return parts.join(' · ') || 'Balanced cultivation gear';
+    if (stats.moveSpeedMultiplier && stats.moveSpeedMultiplier !== 1) parts.push(`${stats.moveSpeedMultiplier > 1 ? '+' : ''}${Math.round((stats.moveSpeedMultiplier - 1) * 100)}% movement`);
+    if (stats.dashCooldownMultiplier && stats.dashCooldownMultiplier !== 1) parts.push(`${Math.round((1 / stats.dashCooldownMultiplier - 1) * 100)}% dash recovery`);
+    if (stats.parryWindowMultiplier && stats.parryWindowMultiplier !== 1) parts.push(`+${Math.round((stats.parryWindowMultiplier - 1) * 100)}% parry window`);
+    if (stats.qiGainMultiplier && stats.qiGainMultiplier !== 1) parts.push(`+${Math.round((stats.qiGainMultiplier - 1) * 100)}% qi gain`);
+    if (stats.lootChanceBonus) parts.push(`+${Math.round(stats.lootChanceBonus * 100)}% gear find`);
+    return parts.join(' · ') || 'No additional stat modifiers';
   }
 
   function renderInventory() {
@@ -1266,22 +1380,23 @@
       button.append(strong, small); button.addEventListener('click', () => { selectedItemUid = item?.uid || null; renderInventory(); }); ui.equipmentSlots.append(button);
     }
     ui.bagGrid.replaceChildren();
+    const bagAt = new Map(bag.map(item => [`${item.x}:${item.y}`, item]));
     for (let y = 0; y < equipment.rows; y++) for (let x = 0; x < equipment.cols; x++) {
-      const cell = document.createElement('div'); cell.className = 'bag-cell'; cell.style.gridColumn = String(x + 1); cell.style.gridRow = String(y + 1); ui.bagGrid.append(cell);
-    }
-    for (const item of bag) {
+      const item = bagAt.get(`${x}:${y}`);
+      if (!item) { const empty = document.createElement('div'); empty.className = 'bag-slot empty'; empty.setAttribute('aria-hidden', 'true'); ui.bagGrid.append(empty); continue; }
       const definition = equipmentApi.getDefinition(item.itemId), button = document.createElement('button');
       button.type = 'button'; button.className = `bag-slot${selectedItemUid === item.uid ? ' selected' : ''}`; button.dataset.rarity = definition.rarity;
-      button.style.gridColumn = `${item.x + 1} / span ${definition.size[0]}`; button.style.gridRow = `${item.y + 1} / span ${definition.size[1]}`;
-      const strong = document.createElement('strong'), small = document.createElement('small'); strong.textContent = definition.name; small.textContent = definition.build.replace('_', ' '); button.append(strong, small);
+      const strong = document.createElement('strong'), small = document.createElement('small'); strong.textContent = definition.name; small.textContent = itemSummary(definition); button.append(strong, small);
       button.addEventListener('click', () => { selectedItemUid = item.uid; renderInventory(); }); ui.bagGrid.append(button);
     }
     const selected = equipmentApi.itemByUid(equipment, selectedItemUid), definition = selected && equipmentApi.getDefinition(selected.itemId);
     ui.bagCount.textContent = `(${bag.length} carried · ${equipment.cols}×${equipment.rows} grid)`;
-    ui.itemDetail.textContent = definition ? `${definition.name} · ${definition.rarity}\n${definition.description}\n${itemSummary(definition)}` : 'Select an item to inspect it.';
-    ui.equipItem.disabled = !selected || Object.values(equipment.equipped).includes(selected.uid);
-    ui.unequipItem.disabled = !selected || !Object.values(equipment.equipped).includes(selected.uid);
-    ui.equipmentStats.textContent = `Weapon path: ${stats.weaponStyle.replace('_', ' ')}${stats.activeSet ? `\nSet awakened: ${stats.activeSet.replace('_', ' ')}` : ''}\nDamage: ${Math.round(stats.damageMultiplier * 100)}% · Defence: ${Math.round(stats.defense * 100)}%\nReach: ${38 + stats.reachBonus} · Move: ${Math.round(stats.moveSpeedMultiplier * 100)}%\nAttack cadence: ${Math.round(100 / stats.attackCooldownMultiplier)}%`;
+    ui.itemDetail.textContent = definition ? `${definition.name} · ${definition.rarity}\n${itemSummary(definition)}` : 'Select an item to inspect it.';
+    const pending = selected && [...pendingSharedDrops.values()].includes(selected.uid);
+    ui.equipItem.disabled = !selected || pending || Object.values(equipment.equipped).includes(selected.uid);
+    ui.unequipItem.disabled = !selected || pending || !Object.values(equipment.equipped).includes(selected.uid);
+    ui.dropItem.disabled = !selected || pending;
+    ui.equipmentStats.textContent = `Damage: ${Math.round(stats.damageMultiplier * 100)}% · Defence: ${Math.round(stats.defense * 100)}%\nHealth bonus: +${stats.maxHpBonus} · Reach: ${38 + stats.reachBonus}\nMove speed: ${Math.round(stats.moveSpeedMultiplier * 100)}% · Attack speed: ${Math.round(100 / stats.attackCooldownMultiplier)}%\nParry window: ${Math.round(stats.parryWindowMultiplier * 100)}% · Dash recovery: ${Math.round(100 / stats.dashCooldownMultiplier)}%`;
   }
 
   function renderKeybinds() {
@@ -1547,6 +1662,7 @@
     if (!result.ok) addMessage('Your pack needs more room before unequipping that item.', 'bad'); else { player.hp = Math.min(player.hp, effectiveMaxHp()); save(); }
     renderInventory(); updateUI();
   });
+  ui.dropItem.addEventListener('click', dropSelectedItem);
   ui.resetKeybinds.addEventListener('click', () => { keybinds.reset(); remappingAction = null; renderKeybinds(); save(); });
   document.querySelectorAll('[data-settings-tab]').forEach(button => button.addEventListener('click', () => {
     const controls = button.dataset.settingsTab === 'controls'; ui.settingsControls.hidden = !controls; ui.settingsProgress.hidden = controls;

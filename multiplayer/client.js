@@ -1,7 +1,7 @@
 (function (root, factory) {
   let dependencies = root.VerdantMultiplayer || {};
   if (typeof module === "object" && module.exports) {
-    dependencies = Object.assign({}, require("./config.js"), require("./presence.js"), require("./challenges.js"), require("./arena.js"));
+    dependencies = Object.assign({}, require("./config.js"), require("./presence.js"), require("./drops.js"), require("./challenges.js"), require("./arena.js"));
     module.exports = factory(dependencies);
   } else {
     root.VerdantMultiplayer = Object.assign(dependencies, factory(dependencies));
@@ -34,6 +34,8 @@
       this.lastPresenceAt = -Infinity;
       this.presenceSeq = 0;
       this.presence = new mp.PresenceStore();
+      this.drops = new mp.WorldDropStore();
+      this.dropRequestSeq = 0;
       this.challenges = new mp.ChallengeController({ send: (message) => this.send(message), timeoutMs: this.config.challengeTimeoutMs, now: this.now });
       this.arena = new mp.ArenaClient({ send: (message) => this.sendArena(message), now: this.now });
       this.arena.leave = () => this.leaveArena();
@@ -98,9 +100,14 @@
       if (!message || typeof message.type !== "string") return false;
       switch (message.type) {
         case "welcome": this.emit("welcome", message); break;
-        case "world_snapshot": this.presence.ingestSnapshot(message.players, this.now()); break;
+        case "world_snapshot": this.presence.ingestSnapshot(message.players, this.now()); this.drops.ingestSnapshot(message.drops); break;
         case "presence": this.presence.ingest(message.player, this.now()); break;
         case "player_leave": this.presence.remove(message.playerId); break;
+        case "drop_created":
+        case "drop_spawn": this.drops.ingest(message.drop); this.emit(message.type, message); break;
+        case "drop_remove": this.drops.remove(message.dropId); this.emit("drop_remove", message); break;
+        case "drop_award": this.drops.remove(message.drop && message.drop.id); this.emit("drop_award", message); break;
+        case "drop_rejected": this.emit("drop_rejected", message); break;
         case "challenge_offer": this.challenges.receiveOffer(message); break;
         case "challenge_update": this.challenges.receiveUpdate(message); break;
         case "arena_start": this.challenges.receiveUpdate(message); this.openArenaSocket(message, false); break;
@@ -226,6 +233,25 @@
       return true;
     }
 
+    createDrop(itemId) {
+      if (typeof itemId !== "string" || !/^[a-z0-9_]{1,48}$/.test(itemId)) return false;
+      const requestId = this.nextDropRequestId();
+      return this.send({ type: "drop_create", requestId, itemId }) ? requestId : false;
+    }
+
+    claimDrop(dropId) {
+      if (typeof dropId !== "string" || !/^[a-f0-9-]{16,64}$/i.test(dropId)) return false;
+      const requestId = this.nextDropRequestId();
+      return this.send({ type: "drop_claim", requestId, dropId }) ? requestId : false;
+    }
+
+    listDrops(now) { return this.drops.list(now == null ? this.now() : now); }
+
+    nextDropRequestId() {
+      this.dropRequestSeq = (this.dropRequestSeq + 1) % 1_000_000_000;
+      return `d${Math.floor(this.now()).toString(36)}_${this.dropRequestSeq.toString(36)}`;
+    }
+
     scheduleReconnect(profile) {
       if (this.closedByUser || this.reconnectTimer || !this.config.enabled) return;
       const base = Math.min(this.config.reconnectMaxMs, this.config.reconnectMinMs * Math.pow(2, this.reconnectAttempt++));
@@ -245,12 +271,12 @@
       this.arenaConnection = null;
       this.arenaDisconnectedAt = null;
       this.arenaReconnectAttempt = 0;
-      this.presence.clear(); this.challenges.reset(); this.arena.end({ reason: "disconnect" });
+      this.presence.clear(); this.drops.clear(); this.challenges.reset(); this.arena.end({ reason: "disconnect" });
       this.setStatus("offline");
     }
 
     snapshot(now) {
-      return { status: this.status, playerId: this.session && this.session.playerId, players: this.presence.getRenderable(now), arena: this.arena.snapshot };
+      return { status: this.status, playerId: this.session && this.session.playerId, players: this.presence.getRenderable(now), drops: this.listDrops(now), arena: this.arena.snapshot };
     }
   }
 

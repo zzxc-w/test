@@ -10,7 +10,19 @@ export const LIMITS = Object.freeze({
   arenaTicketLifetimeMs: 60_000,
   worldWidth: 144 * 24,
   worldHeight: 108 * 24,
+  worldDropLifetimeMs: 5 * 60_000,
+  worldDropClaimDistance: 72,
+  maxWorldDrops: 100,
+  maxWorldDropsPerPlayer: 5,
 });
+
+// The server deliberately owns this allowlist. Clients may only name an item ID;
+// position, lifetime, creator and drop identity are all assigned by the WorldRoom.
+export const WORLD_DROP_ITEM_IDS = Object.freeze(new Set([
+  'sect_iron_sword', 'cloudpiercer_spear', 'twin_moon_blades', 'mountain_cleaver',
+  'wanderer_robes', 'cloudpiercer_mail', 'moonshadow_garb', 'mountain_guard_plate',
+  'steady_heart_pendant', 'far_horizon_jade', 'moonstep_charm', 'earthpulse_medallion',
+]));
 
 export const ARENA = Object.freeze({
   width: 720,

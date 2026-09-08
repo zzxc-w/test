@@ -28,42 +28,42 @@
   const definitions = [
     {
       id: 'sect_iron_sword', name: 'Sect Iron Sword', type: 'weapon', slot: 'weapon',
-      build: 'sword', rarity: 'common', price: 6, size: [1, 3], description: 'A balanced blade issued to wandering disciples.',
+      build: 'sword', rarity: 'common', price: 6, size: [1, 1], description: 'A balanced blade issued to wandering disciples.',
       stats: { damageMultiplier: 1, attackCooldownMultiplier: 1, weaponStyle: 'sword' }
     },
     {
       id: 'cloudpiercer_spear', name: 'Cloudpiercer Spear', type: 'weapon', slot: 'weapon',
-      build: 'spear', rarity: 'uncommon', price: 16, size: [1, 4], description: 'Long reach and deliberate thrusts keep danger at a distance.',
+      build: 'spear', rarity: 'uncommon', price: 16, size: [1, 1], description: 'Long reach and deliberate thrusts keep danger at a distance.',
       stats: { damageMultiplier: 0.94, attackCooldownMultiplier: 1.08, reachBonus: 24, attackArcBonus: -0.18, weaponStyle: 'spear' }
     },
     {
       id: 'twin_moon_blades', name: 'Twin Moon Blades', type: 'weapon', slot: 'weapon',
-      build: 'dual_swords', rarity: 'uncommon', price: 18, size: [2, 2], description: 'Paired blades for relentless close-range pressure.',
+      build: 'dual_swords', rarity: 'uncommon', price: 18, size: [1, 1], description: 'Paired blades for relentless close-range pressure.',
       stats: { damageMultiplier: 0.72, attackCooldownMultiplier: 0.66, dashCooldownMultiplier: 0.9, reachBonus: -5, weaponStyle: 'dual_swords' }
     },
     {
       id: 'mountain_cleaver', name: 'Mountain Cleaver', type: 'weapon', slot: 'weapon',
-      build: 'greatsword', rarity: 'rare', price: 28, size: [2, 4], description: 'A vast spirit-steel sword whose weight rewards commitment.',
+      build: 'greatsword', rarity: 'rare', price: 28, size: [1, 1], description: 'A vast spirit-steel sword whose weight rewards commitment.',
       stats: { damageMultiplier: 1.68, attackCooldownMultiplier: 1.55, reachBonus: 11, attackArcBonus: 0.28, weaponStyle: 'greatsword' }
     },
     {
       id: 'wanderer_robes', name: 'Wanderer Robes', type: 'armor', slot: 'armor',
-      build: 'sword', rarity: 'common', price: 5, size: [2, 3], description: 'Light robes suited to a balanced sword path.',
+      build: 'sword', rarity: 'common', price: 5, size: [1, 1], description: 'Light robes suited to a balanced sword path.',
       stats: { defense: 0.04, maxHpBonus: 8, moveSpeedMultiplier: 1.02 }
     },
     {
       id: 'cloudpiercer_mail', name: 'Cloudpiercer Mail', type: 'armor', slot: 'armor',
-      build: 'spear', rarity: 'uncommon', price: 20, size: [2, 3], description: 'Lamellar armor that stays flexible in a spear stance.',
+      build: 'spear', rarity: 'uncommon', price: 20, size: [1, 1], description: 'Lamellar armor that stays flexible in a spear stance.',
       stats: { defense: 0.1, maxHpBonus: 15, moveSpeedMultiplier: 0.98 }
     },
     {
       id: 'moonshadow_garb', name: 'Moonshadow Garb', type: 'armor', slot: 'armor',
-      build: 'dual_swords', rarity: 'uncommon', price: 21, size: [2, 3], description: 'Silent battle garb woven for evasive cultivators.',
+      build: 'dual_swords', rarity: 'uncommon', price: 21, size: [1, 1], description: 'Silent battle garb woven for evasive cultivators.',
       stats: { defense: 0.05, maxHpBonus: 6, moveSpeedMultiplier: 1.08, dashCooldownMultiplier: 0.92 }
     },
     {
       id: 'mountain_guard_plate', name: 'Mountain Guard Plate', type: 'armor', slot: 'armor',
-      build: 'greatsword', rarity: 'rare', price: 30, size: [2, 3], description: 'Heavy plate that lets its wearer trade blows without yielding.',
+      build: 'greatsword', rarity: 'rare', price: 30, size: [1, 1], description: 'Heavy plate that lets its wearer trade blows without yielding.',
       stats: { defense: 0.2, maxHpBonus: 30, moveSpeedMultiplier: 0.9 }
     },
     {
@@ -169,11 +169,8 @@
     const occupied = new Set();
     state.items.forEach((item) => {
       if (item.uid === ignoredUid || isEquipped(state, item.uid)) return;
-      const definition = getDefinition(item.itemId);
-      if (!definition || !Number.isInteger(item.x) || !Number.isInteger(item.y)) return;
-      for (let y = item.y; y < item.y + definition.size[1]; y += 1) {
-        for (let x = item.x; x < item.x + definition.size[0]; x += 1) occupied.add(x + ':' + y);
-      }
+      if (!getDefinition(item.itemId) || !Number.isInteger(item.x) || !Number.isInteger(item.y)) return;
+      occupied.add(item.x + ':' + item.y);
     });
     return occupied;
   }
@@ -181,14 +178,8 @@
   function canPlace(state, itemOrId, x, y, ignoredUid) {
     const definition = getDefinition(typeof itemOrId === 'string' ? itemOrId : itemOrId && itemOrId.itemId);
     if (!definition || !Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) return false;
-    if (x + definition.size[0] > state.cols || y + definition.size[1] > state.rows) return false;
-    const occupied = occupiedCells(state, ignoredUid);
-    for (let row = y; row < y + definition.size[1]; row += 1) {
-      for (let col = x; col < x + definition.size[0]; col += 1) {
-        if (occupied.has(col + ':' + row)) return false;
-      }
-    }
-    return true;
+    if (x >= state.cols || y >= state.rows) return false;
+    return !occupiedCells(state, ignoredUid).has(x + ':' + y);
   }
 
   function firstOpenPosition(state, itemOrId, ignoredUid) {
@@ -230,9 +221,14 @@
     return { ok: true, item: item };
   }
 
-  function removeItem(state, uid) {
+  // Bag removals are safe by default. Callers must explicitly opt in when an
+  // intentional drop flow is allowed to remove currently equipped gear.
+  function removeItem(state, uid, options) {
     const index = state.items.findIndex((item) => item.uid === uid);
     if (index < 0) return { ok: false, reason: 'item-not-found' };
+    if (isEquipped(state, uid) && !(options && options.allowEquipped === true)) {
+      return { ok: false, reason: 'item-equipped' };
+    }
     SLOTS.forEach((slot) => { if (state.equipped[slot] === uid) state.equipped[slot] = null; });
     const item = state.items.splice(index, 1)[0];
     return { ok: true, item: item };
@@ -250,7 +246,11 @@
     item.x = null;
     item.y = null;
     if (previous) {
-      const position = firstOpenPosition(state, previous);
+      // The selected bag item has already vacated one slot, so a full bag can
+      // still swap atomically instead of leaving equip/unequip stuck.
+      const position = canPlace(state, previous, original.x, original.y)
+        ? original
+        : firstOpenPosition(state, previous);
       if (!position) {
         item.x = original.x;
         item.y = original.y;

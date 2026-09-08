@@ -4,7 +4,7 @@ Multiplayer is feasible, but GitHub Pages can only host the browser client. A se
 
 ## Current status
 
-Multiplayer v1 is implemented. The Cloudflare Worker is deployed at `https://verdant-star-multiplayer.zxuchen.workers.dev`; a separate staging Worker is used for pre-release checks. Live automated tests cover two-client presence, challenge acceptance, arena admission, authoritative movement, and reconnect. The GitHub Pages client connects automatically but always falls back to solo play when the service is unavailable.
+Multiplayer v1 is implemented. The Cloudflare Worker is deployed at `https://verdant-star-multiplayer.zxuchen.workers.dev`; a separate staging Worker is used for pre-release checks. Live automated tests cover two-client presence, shared equipment drop/claim, challenge acceptance, arena admission, authoritative movement, and reconnect. The GitHub Pages client connects automatically but always falls back to solo play when the service is unavailable.
 
 ## Intended first release
 
@@ -15,8 +15,9 @@ Multiplayer v1 is implemented. The Cloudflare Worker is deployed at `https://ver
 - Arena combat uses normalized stats and server-owned HP, positions, cooldowns, dash, parry, riposte, timer and winner. Clients send inputs, not damage or outcomes.
 - Arena state must never be written into `verdant-star-save`; the exact local-world state resumes after the duel.
 - Network failure always falls back to ordinary solo play without blocking saves or the GitHub Pages deployment.
+- Online equipment drops are transient shard objects. The Worker assigns their position, identity, five-minute lifetime and single-winner claim; item IDs are allowlisted and creation/claim are rate limited.
 
-Shared PvE, loot and progression are intentionally out of scope for the first release. Browser saves are editable, so those systems cannot become fair shared authority until accounts and server-side progression exist.
+Shared PvE and authoritative progression are intentionally out of scope for the first release. Browser saves remain editable, so player ownership of equipment cannot be trusted until accounts and server-side progression exist; shared drops improve cooperation but are not an anti-cheat economy.
 
 ## Recommended backend
 
@@ -37,7 +38,8 @@ Cloudflare documents Durable Objects as WebSocket coordinators and supports SQLi
 Keep multiplayer isolated from the monolithic solo game:
 
 - `multiplayer/config.js` — public endpoint and independent protocol/map/ruleset versions;
-- `multiplayer/client.js` — session, reconnect and world-presence state machine;
+- `multiplayer/client.js` — session, reconnect, world-presence and shared-drop state machine;
+- `multiplayer/drops.js` — validated shared-drop storage, proximity lookup and rendering;
 - `multiplayer/presence.js` — interpolation and remote-avatar rendering;
 - `multiplayer/challenges.js` — nearby-player and offer sheets;
 - `multiplayer/arena.js` — isolated arena presentation/prediction;

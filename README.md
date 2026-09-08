@@ -20,13 +20,13 @@ Keyboard controls can be remapped from **Menu → Keybinds**. Touch controls sta
 
 Developer test chamber: press **Ctrl + Shift + Alt + D** on a hardware keyboard, or press and hold **Menu** for about two seconds on touch devices.
 
-After the short combat/cultivation tutorial, exploration is self-directed. Regional materials and unique boss drops unlock later cultivation stages. Enemies can drop equipment, and Quartermaster Lian at the Crossroads sells weapons, armor, and pendants for sword, spear, dual-blade, and greatsword builds. Matching two pieces awakens a build bonus. Solo-world equipment does not alter normalized arena balance.
+After the short combat/cultivation tutorial, exploration is self-directed. Regional materials and unique boss drops unlock later cultivation stages. Enemies can drop equipment, and Quartermaster Lian at the Crossroads sells weapons, armor, and pendants for sword, spear, dual-blade, and greatsword builds. Every item occupies one backpack slot; select one to equip, unequip, or drop it. Matching two pieces awakens a build bonus. Solo-world equipment does not alter normalized arena balance.
 
 Progress, equipment, and keybindings are saved in the browser automatically. A cultivator name is chosen once when beginning an unnamed save and remains bound to that journey; clearing progress returns to name creation.
 
 ## Multiplayer
 
-Multiplayer connects automatically after beginning the journey. The **Online · Nearby** button lists cultivators within challenge range. Accepted challenges move both players into a separate normalized Arena Realm with pixel fighters, visible attack/parry/dash states, health and cooldown displays, and server-authoritative combat. Local prediction makes movement and action feedback immediate, opponent interpolation removes snapshot judder, and the arena HUD shows measured round-trip latency; the server remains authoritative for positions, hits, and damage. **Leave Realm** and automatic stalled-connection recovery always return the player to the unchanged normal world. Arena outcomes never alter local cultivation progress or the normal-world save, and the solo game remains playable if the service is unavailable.
+Multiplayer connects automatically after beginning the journey. The **Online · Nearby** button lists cultivators within challenge range. Equipment dropped while online appears to everyone in the shard for five minutes and can be claimed once with the normal interact control. Accepted challenges move both players into a separate normalized Arena Realm with pixel fighters, visible attack/parry/dash states, health and cooldown displays, and server-authoritative combat. Local prediction makes movement and action feedback immediate, opponent interpolation removes snapshot judder, and the arena HUD shows measured round-trip latency; the server remains authoritative for positions, hits, and damage. **Leave Realm** and automatic stalled-connection recovery always return the player to the unchanged normal world. Arena outcomes never alter local cultivation progress or the normal-world save, and the solo game remains playable if the service is unavailable.
 
 The browser client lives in `multiplayer/`; the Cloudflare Worker and deployment notes live in `server/`.
 
@@ -35,4 +35,3 @@ The browser client lives in `multiplayer/`; the Cloudflare Worker and deployment
 This game has no build dependencies. Serve the repository with any static web server, then open `index.html` through that server. Changes to `main` deploy automatically through GitHub Pages after the validation step passes.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the shared editing workflow.
-

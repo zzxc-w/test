@@ -8,11 +8,11 @@ const original = fs.readFileSync(sourcePath, 'utf8');
 const html = fs.readFileSync(htmlPath, 'utf8');
 const htmlIds = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
 assert.strictEqual(new Set(htmlIds).size, htmlIds.length, 'HTML IDs must be unique');
-for (const id of ['settingsButton','multiplayerButton','settingsMenu','closeSettings','keybindList','inventoryMenu','closeInventory','dialogueMenu','closeDialogue','equipmentSlots','bagGrid','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText','playerNameLabel','nameSetup','playerNameInput','nameError','returningName']) {
+for (const id of ['settingsButton','multiplayerButton','settingsMenu','closeSettings','keybindList','inventoryMenu','closeInventory','dialogueMenu','closeDialogue','equipmentSlots','bagGrid','dropItem','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText','playerNameLabel','nameSetup','playerNameInput','nameError','returningName']) {
   assert(htmlIds.includes(id), `missing UI element #${id}`);
 }
-for (const file of ['multiplayer/config.js?v=1','multiplayer/presence.js?v=2','multiplayer/challenges.js?v=1','multiplayer/arena.js?v=3','multiplayer/client.js?v=2']) assert(html.includes(`src="${file}"`), `missing multiplayer script ${file}`);
-assert(html.indexOf('multiplayer/config.js') < html.indexOf('multiplayer/client.js') && html.indexOf('multiplayer/client.js') < html.indexOf('game.js?v=11'), 'multiplayer scripts must load before the game bridge');
+for (const file of ['multiplayer/config.js?v=1','multiplayer/presence.js?v=2','multiplayer/drops.js?v=1','multiplayer/challenges.js?v=1','multiplayer/arena.js?v=3','multiplayer/client.js?v=3']) assert(html.includes(`src="${file}"`), `missing multiplayer script ${file}`);
+assert(html.indexOf('multiplayer/config.js') < html.indexOf('multiplayer/drops.js') && html.indexOf('multiplayer/drops.js') < html.indexOf('multiplayer/client.js') && html.indexOf('multiplayer/client.js') < html.indexOf('game.js?v=12'), 'multiplayer scripts must load before the game bridge');
 for (const file of ['systems/equipment.js?v=1','systems/keybinds.js?v=1','systems/dialogue.js?v=1','systems/shop.js?v=1','systems/cultivation.js?v=1']) assert(html.includes(`src="${file}"`), `missing gameplay system ${file}`);
 assert(html.includes("apiBase: 'https://verdant-star-multiplayer.zxuchen.workers.dev'"), 'production multiplayer endpoint must be configured');
 assert(!html.includes('SESSION_SIGNING_KEY'), 'multiplayer signing secret must never be shipped to the browser');
@@ -26,11 +26,12 @@ const source = original.replace(needle, `  configureNameSetup(); updateUI();
     ctx, player, treasures, enemies, map, areas, landmarks, resourceNodes, taps, travelTargets, dash, dashCooldownDuration, cultivationAdvancements, qiCapacity, reconcileQuestProgress,
     passableAt, runDevAction, safeTeleport, save, bossDefs, bossStates, tutorial, itemDefs, merchant, derivedCombatStats,
     currentBreakthroughRequirement, missingRequirements, breakthrough, enemyProfile,
-    startEnemyAttack, resolveEnemyAttack, updateEnemyCombat, parry, attack, useTalisman, cultivate, killEnemy, loseCultivationStage, handlePlayerDeath, handleActions, draw, updateUI, cleanPlayerName, configureNameSetup,
+    startEnemyAttack, resolveEnemyAttack, updateEnemyCombat, parry, attack, useTalisman, cultivate, killEnemy, loseCultivationStage, handlePlayerDeath, handleActions, draw, updateUI, cleanPlayerName, configureNameSetup, dropSelectedItem, collectGroundGear,
     get quest() { return quest; }, set quest(value) { quest = value; },
     get mapOpen() { return mapOpen; },
     get playerName() { return playerName; }, set playerName(value) { playerName = value; },
     get equipment() { return equipment; }, get keybinds() { return keybinds; }, equipmentApi, keybindApi,
+    get pickups() { return pickups; }, set selectedItemUid(value) { selectedItemUid = value; },
     get suppressSave() { return suppressSave; }
   };
   requestAnimationFrame(frame);
@@ -83,6 +84,16 @@ class FakeElement {
   t.keybinds.setBinding('attack', 'x', 0); t.save();
   const saved = JSON.parse(storage.get('verdant-star-save'));
   assert.strictEqual(saved.version, 8); assert(saved.equipment && saved.keybinds.attack.includes('x'), 'equipment and remapped controls must persist in v8');
+}
+
+{
+  const { t } = boot();
+  const weapon = t.equipmentApi.getEquipped(t.equipment, 'weapon');
+  t.selectedItemUid = weapon.uid; t.dropSelectedItem();
+  assert.equal(t.equipmentApi.getEquipped(t.equipment, 'weapon'), null, 'dropping equipped gear must safely clear its slot');
+  const ground = t.pickups.find(pickup => pickup.type === 'gear' && pickup.itemId === weapon.itemId);
+  assert(ground, 'offline drops must appear in the world');
+  assert.equal(t.collectGroundGear(ground), true, 'a dropped item must be collectible again');
 }
 
 function boot(saved) {

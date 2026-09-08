@@ -55,6 +55,18 @@ export function validateChallengeResponse(message) {
   return { challengeId: message.challengeId, accept: message.accept };
 }
 
+export function validateDropCreate(message) {
+  if (message?.type !== 'drop_create' || !hasOnly(message, ['type', 'requestId', 'itemId'])) return null;
+  if (!validRequestId(message.requestId) || typeof message.itemId !== 'string' || !/^[a-z0-9_]{1,48}$/.test(message.itemId)) return null;
+  return { requestId: message.requestId, itemId: message.itemId };
+}
+
+export function validateDropClaim(message) {
+  if (message?.type !== 'drop_claim' || !hasOnly(message, ['type', 'requestId', 'dropId'])) return null;
+  if (!validRequestId(message.requestId) || typeof message.dropId !== 'string' || !/^[a-f0-9-]{16,64}$/i.test(message.dropId)) return null;
+  return { requestId: message.requestId, dropId: message.dropId };
+}
+
 export function validateArenaInput(message) {
   if (message?.type !== 'arena_input') return null;
   if (!hasOnly(message, ['type', 'arenaId', 'seq', 'moveX', 'moveY', 'aimX', 'aimY', 'attack', 'parry', 'dash'])) return null;
@@ -108,4 +120,8 @@ export function socketSend(socket, payload) {
 function hasOnly(object, allowed) {
   const keys = Object.keys(object);
   return keys.every((key) => allowed.includes(key));
+}
+
+function validRequestId(value) {
+  return typeof value === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(value);
 }

@@ -3,6 +3,7 @@
 const assert = require("assert");
 const { createConfig } = require("../config.js");
 const { PresenceStore } = require("../presence.js");
+const { WorldDropStore } = require("../drops.js");
 const { ChallengeController } = require("../challenges.js");
 const { ArenaClient, createArenaInputState } = require("../arena.js");
 const { MultiplayerClient } = require("../client.js");
@@ -30,6 +31,16 @@ function testPresence() {
   assert.equal(store.ingest({ id: "sequenced", x: 9, y: 9, seq: 1 }, 1101), false);
   store.prune(7000);
   assert.equal(store.players.size, 0);
+}
+
+function testWorldDrops() {
+  const store = new WorldDropStore();
+  const drop = { id: '12345678-1234-1234-1234-123456789abc', itemId: 'cloudpiercer_spear', x: 10, y: 20, createdAt: 900, expiresAt: 2000 };
+  assert(store.ingest(drop));
+  assert.equal(store.nearby(10, 10, 11, 1000).length, 1);
+  assert.equal(store.nearby(100, 100, 10, 1000).length, 0);
+  assert.equal(store.list(2001).length, 0, 'expired shared drops should disappear locally');
+  assert.equal(store.ingest({ ...drop, id: '../bad' }), false);
 }
 
 function testChallenges() {
@@ -155,6 +166,15 @@ async function testClient() {
   assert(client.updatePresence({ x: 3, y: 4 }));
   socket.message({ type: "presence", player: { id: "p2", name: "Friend", x: 4, y: 5 } });
   assert.equal(client.snapshot(now).players.length, 1);
+  const dropId = '12345678-1234-1234-1234-123456789abc';
+  socket.message({ type: 'drop_spawn', drop: { id: dropId, itemId: 'moonstep_charm', x: 4, y: 5, createdAt: now, expiresAt: now + 5000 } });
+  assert.equal(client.listDrops(now).length, 1);
+  const createRequest = client.createDrop('sect_iron_sword');
+  assert(createRequest && socket.sent.at(-1).type === 'drop_create');
+  const claimRequest = client.claimDrop(dropId);
+  assert(claimRequest && socket.sent.at(-1).type === 'drop_claim');
+  socket.message({ type: 'drop_award', requestId: claimRequest, drop: { id: dropId, itemId: 'moonstep_charm', x: 4, y: 5, createdAt: now, expiresAt: now + 5000 } });
+  assert.equal(client.listDrops(now).length, 0);
   socket.message({ type: "challenge_offer", challengeId: "c1", fromPlayerId: "p2" });
   assert.equal(client.challenges.snapshot().offers.length, 1);
   socket.message({ type: "arena_start", arenaId: "a1", playerId: "p1", ticket: "arena ticket", websocketUrl: "wss://worker.example/arena" });
@@ -197,7 +217,7 @@ async function testArenaWatchdog() {
 }
 
 async function main() {
-  testConfig(); testPresence(); testChallenges(); testArena(); testArenaPredictionAndInterpolation(); await testClient(); await testArenaWatchdog();
+  testConfig(); testPresence(); testWorldDrops(); testChallenges(); testArena(); testArenaPredictionAndInterpolation(); await testClient(); await testArenaWatchdog();
   console.log("multiplayer browser client tests passed");
 }
 

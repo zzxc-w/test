@@ -64,6 +64,21 @@ a.send(JSON.stringify({ type: 'presence', seq: 1, x: 1700, y: 1300, facing: 'eas
 b.send(JSON.stringify({ type: 'presence', seq: 1, x: 1740, y: 1300, facing: 'west', moving: false }));
 await a.waitFor((packet) => packet.type === 'presence' && packet.player?.id === bSession.playerId, 'shared presence');
 
+const dropRequestId = `live_drop_${Date.now()}`;
+a.send(JSON.stringify({ type: 'drop_create', requestId: dropRequestId, itemId: 'sect_iron_sword' }));
+const [created, spawned] = await Promise.all([
+  a.waitFor((packet) => packet.type === 'drop_created' && packet.requestId === dropRequestId, 'drop creation'),
+  b.waitFor((packet) => packet.type === 'drop_spawn', 'shared drop visibility'),
+]);
+if (created.drop?.id !== spawned.drop?.id) throw new Error('Players received different shared drop IDs');
+const claimRequestId = `live_claim_${Date.now()}`;
+b.send(JSON.stringify({ type: 'drop_claim', requestId: claimRequestId, dropId: created.drop.id }));
+const [award, removal] = await Promise.all([
+  b.waitFor((packet) => packet.type === 'drop_award' && packet.requestId === claimRequestId, 'drop award'),
+  a.waitFor((packet) => packet.type === 'drop_remove' && packet.dropId === created.drop.id, 'drop removal'),
+]);
+if (award.drop?.itemId !== 'sect_iron_sword' || removal.reason !== 'claimed') throw new Error('Shared drop claim was inconsistent');
+
 a.send(JSON.stringify({ type: 'challenge_request', targetPlayerId: bSession.playerId }));
 const offer = await b.waitFor((packet) => packet.type === 'challenge_offer', 'challenge offer');
 b.send(JSON.stringify({ type: 'challenge_response', challengeId: offer.challengeId, accept: true }));
@@ -90,4 +105,4 @@ await ready(reconnectA);
 await reconnectA.waitFor((packet) => packet.type === 'arena_snapshot', 'arena reconnect snapshot');
 
 for (const socket of [reconnectA, arenaB, a, b]) socket.close();
-console.log(JSON.stringify({ health: true, presence: true, challenge: true, arena: true, reconnect: true }));
+console.log(JSON.stringify({ health: true, presence: true, sharedDrops: true, challenge: true, arena: true, reconnect: true }));

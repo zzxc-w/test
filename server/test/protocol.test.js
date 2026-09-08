@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cleanDisplayName, isAllowedOrigin, safeJson, validateArenaInput, validateChallengeRequest, validatePresence } from '../src/protocol.js';
+import { cleanDisplayName, isAllowedOrigin, safeJson, validateArenaInput, validateChallengeRequest, validateDropClaim, validateDropCreate, validatePresence } from '../src/protocol.js';
 
 test('safeJson rejects oversized, malformed and non-object messages', () => {
   assert.deepEqual(safeJson('{"type":"ping"}'), { type: 'ping' });
@@ -40,6 +40,15 @@ test('challenge and arena input match the browser contract', () => {
   assert.deepEqual(validateArenaInput({ type: 'arena_input', arenaId: id, seq: 1, moveX: 0.5, moveY: -1, attack: true, dash: false, parry: false }), {
     seq: 1, moveX: 0.5, moveY: -1, aimX: 0.5, aimY: -1, attack: true, dash: false, parry: false,
   });
+});
+
+test('world drop messages use strict request and item identifiers', () => {
+  const id = '12345678-1234-1234-1234-123456789abc';
+  assert.deepEqual(validateDropCreate({ type: 'drop_create', requestId: 'd1', itemId: 'cloudpiercer_spear' }), { requestId: 'd1', itemId: 'cloudpiercer_spear' });
+  assert.equal(validateDropCreate({ type: 'drop_create', requestId: 'd1', itemId: '../secret' }), null);
+  assert.equal(validateDropCreate({ type: 'drop_create', requestId: 'd1', itemId: 'cloudpiercer_spear', x: 1 }), null);
+  assert.deepEqual(validateDropClaim({ type: 'drop_claim', requestId: 'd2', dropId: id }), { requestId: 'd2', dropId: id });
+  assert.equal(validateDropClaim({ type: 'drop_claim', requestId: 'bad request', dropId: id }), null);
 });
 
 test('origin allowlist uses exact matches', () => {

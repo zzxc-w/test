@@ -1,5 +1,5 @@
-import { LIMITS } from './constants.js';
-import { safeJson, socketSend, validateChallengeRequest, validateChallengeResponse, validatePresence } from './protocol.js';
+import { LIMITS, WORLD_DROP_ITEM_IDS } from './constants.js';
+import { safeJson, socketSend, validateChallengeRequest, validateChallengeResponse, validateDropClaim, validateDropCreate, validatePresence } from './protocol.js';
 import { TokenBucket } from './rate-limit.js';
 import { signToken } from './tokens.js';
 
@@ -8,6 +8,8 @@ export class WorldRoom {
     this.state = state;
     this.env = env;
     this.rateLimits = new WeakMap();
+    this.drops = null;
+    this.dropsLoading = null;
   }
 
   async fetch(request) {
@@ -59,10 +61,13 @@ export class WorldRoom {
       type: 'welcome', playerId, protocolVersion: Number(protocolVersion), mapVersion: Number(mapVersion),
       reconnectGraceMs: LIMITS.reconnectGraceMs,
     });
+    await this.ensureDropsLoaded();
+    await this.pruneDrops(Date.now());
     socketSend(server, {
       type: 'world_snapshot',
       serverTime: Date.now(),
       players: this.players().filter((item) => item.id !== playerId).map(publicPlayer),
+      drops: Object.values(this.drops).map(publicDrop),
     });
     this.broadcast({ type: 'presence', player: publicPlayer(player), serverTime: Date.now() }, playerId);
     return new Response(null, { status: 101, webSocket: client });
@@ -89,6 +94,17 @@ export class WorldRoom {
       socket.serializeAttachment(player);
       this.broadcast({ type: 'presence', player: publicPlayer(player), serverTime: now }, player.id);
       return;
+    }
+
+    if (message.type === 'drop_create') {
+      if (!limits.drops.take()) return socketSend(socket, { type: 'drop_rejected', requestId: message.requestId, reason: 'rate_limited' });
+      const request = validateDropCreate(message);
+      return request ? this.createDrop(socket, player, request) : this.protocolStrike(socket, 'Invalid drop');
+    }
+    if (message.type === 'drop_claim') {
+      if (!limits.drops.take()) return socketSend(socket, { type: 'drop_rejected', requestId: message.requestId, reason: 'rate_limited' });
+      const request = validateDropClaim(message);
+      return request ? this.claimDrop(socket, player, request) : this.protocolStrike(socket, 'Invalid drop claim');
     }
 
     if (!limits.actions.take()) return this.protocolStrike(socket, 'Rate limit exceeded');
@@ -123,6 +139,48 @@ export class WorldRoom {
     await this.saveChallenges(challenges);
     socketSend(socket, { type: 'challenge_update', challengeId: challenge.id, status: 'pending', targetPlayerId: targetId, expiresAt: challenge.expiresAt });
     socketSend(targetSocket, { type: 'challenge_offer', challengeId: challenge.id, fromPlayerId: challenger.id, fromName: challenger.name, expiresAt: challenge.expiresAt });
+  }
+
+  async createDrop(socket, player, request) {
+    if (!WORLD_DROP_ITEM_IDS.has(request.itemId)) {
+      return socketSend(socket, { type: 'drop_rejected', requestId: request.requestId, reason: 'item_not_allowed' });
+    }
+    await this.ensureDropsLoaded();
+    const now = Date.now();
+    await this.pruneDrops(now);
+    const active = Object.values(this.drops);
+    if (active.length >= LIMITS.maxWorldDrops || active.filter((drop) => drop.createdBy === player.id).length >= LIMITS.maxWorldDropsPerPlayer) {
+      return socketSend(socket, { type: 'drop_rejected', requestId: request.requestId, reason: 'drop_limit' });
+    }
+    const drop = {
+      id: crypto.randomUUID(), itemId: request.itemId,
+      x: Math.max(0, Math.min(LIMITS.worldWidth, player.x + Math.cos(Number(player.facing) || 0) * 28)),
+      y: Math.max(0, Math.min(LIMITS.worldHeight, player.y + Math.sin(Number(player.facing) || 0) * 28)),
+      createdBy: player.id,
+      createdAt: now, expiresAt: now + LIMITS.worldDropLifetimeMs,
+    };
+    this.drops[drop.id] = drop;
+    await this.saveDrops();
+    socketSend(socket, { type: 'drop_created', requestId: request.requestId, drop: publicDrop(drop) });
+    this.broadcast({ type: 'drop_spawn', drop: publicDrop(drop), serverTime: now }, player.id);
+    await this.scheduleDropAlarm(drop.expiresAt);
+  }
+
+  async claimDrop(socket, player, request) {
+    await this.ensureDropsLoaded();
+    const now = Date.now();
+    await this.pruneDrops(now);
+    const drop = this.drops[request.dropId];
+    if (!drop) return socketSend(socket, { type: 'drop_rejected', requestId: request.requestId, reason: 'not_found', dropId: request.dropId });
+    if (Math.hypot(player.x - drop.x, player.y - drop.y) > LIMITS.worldDropClaimDistance) {
+      return socketSend(socket, { type: 'drop_rejected', requestId: request.requestId, reason: 'too_far', dropId: drop.id });
+    }
+    // Durable Object events are serialized; remove synchronously before the first
+    // await so two simultaneous claims can never both receive an award.
+    delete this.drops[drop.id];
+    await this.saveDrops();
+    socketSend(socket, { type: 'drop_award', requestId: request.requestId, drop: publicDrop(drop) });
+    this.broadcast({ type: 'drop_remove', dropId: drop.id, reason: 'claimed', claimedBy: player.id, serverTime: now }, player.id);
   }
 
   async respondToChallenge(socket, player, response) {
@@ -207,6 +265,9 @@ export class WorldRoom {
       }
     }
     await this.saveChallenges(challenges, false);
+    await this.ensureDropsLoaded();
+    const dropExpiry = await this.pruneDrops(now);
+    if (dropExpiry !== null) next = next === null ? dropExpiry : Math.min(next, dropExpiry);
     if (next !== null) await this.state.storage.setAlarm(next);
   }
 
@@ -226,7 +287,12 @@ export class WorldRoom {
   }
 
   newLimits() {
-    return { presence: new TokenBucket(12, LIMITS.presencePerSecond), actions: new TokenBucket(6, LIMITS.actionsPerSecond), strikes: 0 };
+    return {
+      presence: new TokenBucket(12, LIMITS.presencePerSecond),
+      actions: new TokenBucket(6, LIMITS.actionsPerSecond),
+      drops: new TokenBucket(3, 0.75),
+      strikes: 0,
+    };
   }
 
   protocolStrike(socket, reason) {
@@ -250,6 +316,43 @@ export class WorldRoom {
       if (!alarm || alarm > next) await this.state.storage.setAlarm(next);
     }
   }
+
+  async ensureDropsLoaded() {
+    if (this.drops) return this.drops;
+    if (!this.dropsLoading) this.dropsLoading = this.state.storage.get('world_drops').then((value) => {
+      this.drops = value && typeof value === 'object' ? value : {};
+      return this.drops;
+    });
+    return this.dropsLoading;
+  }
+
+  async saveDrops() {
+    await this.state.storage.put('world_drops', this.drops);
+  }
+
+  async pruneDrops(now) {
+    await this.ensureDropsLoaded();
+    let changed = false;
+    let next = null;
+    for (const drop of Object.values(this.drops)) {
+      if (!drop || drop.expiresAt <= now) {
+        if (drop?.id) {
+          delete this.drops[drop.id];
+          this.broadcast({ type: 'drop_remove', dropId: drop.id, reason: 'expired', serverTime: now });
+        }
+        changed = true;
+      } else {
+        next = next === null ? drop.expiresAt : Math.min(next, drop.expiresAt);
+      }
+    }
+    if (changed) await this.saveDrops();
+    return next;
+  }
+
+  async scheduleDropAlarm(deadline) {
+    const alarm = await this.state.storage.getAlarm();
+    if (!alarm || alarm > deadline) await this.state.storage.setAlarm(deadline);
+  }
 }
 
 function publicPlayer(player) {
@@ -257,6 +360,10 @@ function publicPlayer(player) {
     id: player.id, name: player.name, x: player.x, y: player.y,
     facing: player.facing, emote: player.emote, action: player.action || 'none', seq: player.seq,
   };
+}
+
+function publicDrop(drop) {
+  return { id: drop.id, itemId: drop.itemId, x: drop.x, y: drop.y, createdAt: drop.createdAt, expiresAt: drop.expiresAt };
 }
 
 export function withinChallengeRange(a, b) {
