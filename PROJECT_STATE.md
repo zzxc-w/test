@@ -1,6 +1,6 @@
 # Project State
 
-_Last updated: 2026-09-07. Treat this as a continuity summary, not a substitute for checking the current branch, code, `git status`, and `git diff`._
+_Last updated: 2026-09-08. Treat this as a continuity summary, not a substitute for checking the current branch, code, `git status`, and `git diff`._
 
 ## Purpose and architecture
 
@@ -8,13 +8,14 @@ _Last updated: 2026-09-07. Treat this as a continuity summary, not a substitute 
 
 The project is a dependency-free static site:
 
-- `index.html` contains the page structure, CSS, HUD, permanent-name setup, settings/dev dialogs, responsive touch controls, multiplayer status/panel shell, and a fixed 960x540 canvas. It loads the dependency-free multiplayer modules before `game.js?v=10`.
+- `index.html` contains the page structure, CSS, HUD, name setup, settings/dev/inventory/dialogue/shop dialogs, responsive touch controls, multiplayer shell, and a fixed 960x540 canvas. It loads dependency-free system and multiplayer modules before `game.js?v=11`.
 - `game.js` is a single IIFE containing game data, deterministic world generation, input, update/render loops, combat, exploration, progression, quests, and save/load logic.
+- `systems/` contains dependency-free browser/CommonJS domain modules for spatial equipment, keybindings, branching dialogue, transactional shops, and cultivation recipes.
 - `multiplayer/` is an optional dependency-free browser client for presence, challenges, and isolated arena play.
 - `server/` is a Cloudflare Worker using SQLite Durable Objects for the shared world and server-authoritative duel rooms.
 - Graphics are drawn procedurally with Canvas 2D; smoothing is disabled for a pixel-art look.
 - There is no framework, package manager, build step, backend, account system, or asset pipeline.
-- Saves are device-local in `localStorage` under `verdant-star-save`; the current schema is version 7.
+- Saves are device-local in `localStorage` under `verdant-star-save`; the current schema is version 8.
 
 ## Implemented
 
@@ -32,6 +33,10 @@ The project is a dependency-free static site:
 - Autosave and frame-level error recovery.
 - A settings dialog with a two-step, game-save-only progress reset, plus a non-persistent hidden developer test chamber opened with `Ctrl+Shift+Alt+D`.
 - GitHub Pages deployment from `main`. The workflow syntax-checks `game.js`, runs dependency-free smoke tests, uploads the static repository, and deploys it.
+- A 6×5 spatial backpack with weapon/armor/pendant slots, starter gear, safe save repair, four weapon identities (sword, spear, dual swords, greatsword), matching build sets, and two-piece bonuses.
+- Equipment modifies solo combat reach, cadence, damage, defence, movement, parry timing, dash timing, health, qi gain, and procedural weapon visuals. Enemies can drop gear; bosses have guaranteed themed drops.
+- Quartermaster Lian at Crossroads provides branching dialogue and sells every current gear piece for spirit stones. Dialogue, shop, and cultivation recipe logic is reusable for later NPCs, story conditions, and areas.
+- Remappable keyboard actions in Settings, persisted with the save; touch controls remain semantic and fixed-position.
 - Collaboration documentation in `README.md`, `CONTRIBUTING.md`, and `AGENTS.md`.
 
 ## Important decisions and constraints
@@ -43,6 +48,9 @@ The project is a dependency-free static site:
 - Version 5 migrates the old quest into two tutorial flags, adds stable boss state, regional ingredients, and key items, and grants the Sectbreaker Core to any save that had already defeated the old boss.
 - Version 6 stores discoveries by stable area/landmark IDs and preserves name-based discoveries through migration.
 - Version 7 stores one validated 1–20 character cultivator name in the main save. Unnamed legacy saves receive one choice on the title screen; the name is locked until progress is cleared.
+- Version 8 adds sanitized equipment and keybinding state. Older or malformed saves receive starter sword/robes without losing existing progression.
+- Equipment affects only the solo world. Arena builds stay normalized until multiplayer progression has server-side identity and storage.
+- Arena rendering is frame-rate-driven rather than packet-driven: local movement/actions are predicted, opponents interpolate through a 75 ms buffer, and authoritative snapshots reconcile drift. The server still owns positions, hits, damage, and cooldown validity.
 - Cultivation belongs near the green spirit veins, not at shrines or the sword-grave/cross landmark.
 - Preserve all legacy world coordinates when expanding the map. Append areas/caches instead of reordering them so old positions and cache-save indices remain valid.
 - Boss strength is fixed rather than player-scaled. Unique boss keys are durable proof of victory and are checked, not consumed, during realm breakthroughs.
@@ -79,10 +87,12 @@ The project is a dependency-free static site:
 ## Current state and known issues
 
 - Multiplayer v1 is live on GitHub Pages: cosmetic shared-world presence, proximity challenges, a separate normalized server-authoritative arena, reconnect handling, and iPad arena controls. Staging and production Workers are deployed, and `index.html` uses the production endpoint.
+- Low-latency arena protocol support is deployed to staging (Worker version `7b489a5f-2bef-4a94-bbad-1a552e2f6de5`) and production (`9f7d8115-aa85-4864-ba67-434fb5a5cb3f`); both passed the live two-client test before the browser client was published.
 - Multiplayer and arena state is deliberately excluded from `verdant-star-save`; the solo simulation pauses during a duel and remains the fail-open fallback.
-- Browser-client tests, 26 Worker protocol/simulation/security/lifecycle tests, the original smoke suite, and browser integration checks pass. Automated live tests passed against staging and production for health, two-client presence, challenge acceptance, isolated arena admission/input, and reconnect; a two-tab local staging check passed permanent naming, named challenges, redesigned arena entry/rendering, and immediate return through Leave Realm.
+- Browser-client tests, 27 Worker protocol/simulation/security/lifecycle tests, 23 focused system tests, the gameplay smoke suite, and browser integration checks pass. Automated live tests passed against staging and production for health, two-client presence, challenge acceptance, isolated arena admission/input, and reconnect. A local narrow-viewport browser pass covered inventory, remapping, dialogue, and shop rendering.
 - CI performs JavaScript syntax validation and dependency-free migration, progression, combat, dash, reset, and touch-state smoke tests, but still lacks full real-browser interaction coverage. Test desktop and touch behavior manually after major UI or input changes.
 - `game.js` and the inline CSS are monolithic. Concurrent broad edits are likely to conflict; use small branches/PRs and avoid assigning two people overlapping sections of `game.js`.
+- Equipment placement is click-to-select/equip rather than drag-and-drop; the spatial model already supports safe movement, so drag UI can be added later without changing save format.
 - `main` was unprotected at the last check. `hydrogendesigns` currently resolves to read access, which likely means the collaborator invitation has not yet been accepted.
 - This task's local working folder was not a Git checkout, so uncommitted work on another person's machine cannot be represented here.
 
@@ -97,6 +107,7 @@ The project is a dependency-free static site:
 - `AGENTS.md` — instructions for agents and project-continuity maintenance.
 - `MULTIPLAYER.md` — multiplayer authority, security, hosting and staged implementation plan.
 - `multiplayer/` — optional browser connection, presence, challenge, arena UI/input, and tests.
+- `systems/` — equipment, keybinding, dialogue, shop, cultivation domain modules and focused Node tests.
 - `server/` — Worker routes, Durable Objects, authoritative arena simulation, security checks, tests, and Wrangler configuration.
 - `.gitignore` and `.gitattributes` — repository hygiene and consistent line endings.
 
@@ -104,8 +115,9 @@ The project is a dependency-free static site:
 
 1. Confirm `hydrogendesigns` has accepted the invitation and now has write access.
 2. Work from the latest `main` using one feature branch per change; use pull requests and avoid simultaneous edits to the same monolithic file.
-3. Smoke-test production on desktop and touch, especially enemy telegraphs/parry timing, all boss drops, every breakthrough requirement, new-region navigation, old saves, and iPad multitouch.
-4. Test multiplayer with two separate physical devices/networks, especially iPad Safari background/reconnect behavior and long arena sessions.
+3. Smoke-test production on desktop and touch, especially inventory layout, remapped keys, merchant interaction, equipment-derived health, boss drops, breakthroughs, old v7 saves, and iPad multitouch.
+4. Test multiplayer with two separate physical devices/networks, especially prediction under high RTT, iPad Safari background/reconnect behavior, and long arena sessions.
 5. Add GitHub Actions Worker deployment only after scoped Cloudflare CI credentials are deliberately configured as repository secrets.
 6. Add broader real-browser interaction coverage when the UI grows further.
-7. Before major parallel feature work, modularize `game.js` incrementally with behavior and save-compatibility checks.
+7. Build story NPCs, quests, area-specific vendors, and cultivation teachers through the reusable `systems/` APIs; keep authored content/data out of the domain modules.
+8. Before major parallel feature work, modularize `game.js` incrementally with behavior and save-compatibility checks.

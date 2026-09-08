@@ -164,6 +164,7 @@ export function publicArenaSnapshot(state, now = Date.now()) {
       attackPhase: attackPhase(player, now),
       actionStartedAt: actionStartedAt(player, now), actionEndsAt: actionEndsAt(player, now),
       attackReadyAt: player.attackReadyAt, parryReadyAt: player.parryReadyAt, dashReadyAt: player.dashReadyAt,
+      lastInputSeq: player.input.seq,
       connected: player.connected,
     })),
   };

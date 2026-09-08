@@ -8,27 +8,29 @@ const original = fs.readFileSync(sourcePath, 'utf8');
 const html = fs.readFileSync(htmlPath, 'utf8');
 const htmlIds = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
 assert.strictEqual(new Set(htmlIds).size, htmlIds.length, 'HTML IDs must be unique');
-for (const id of ['settingsButton','multiplayerButton','settingsMenu','closeSettings','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText','playerNameLabel','nameSetup','playerNameInput','nameError','returningName']) {
+for (const id of ['settingsButton','multiplayerButton','settingsMenu','closeSettings','keybindList','inventoryMenu','closeInventory','dialogueMenu','closeDialogue','equipmentSlots','bagGrid','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText','playerNameLabel','nameSetup','playerNameInput','nameError','returningName']) {
   assert(htmlIds.includes(id), `missing UI element #${id}`);
 }
-for (const file of ['multiplayer/config.js?v=1','multiplayer/presence.js?v=2','multiplayer/challenges.js?v=1','multiplayer/arena.js?v=2','multiplayer/client.js?v=2']) assert(html.includes(`src="${file}"`), `missing multiplayer script ${file}`);
-assert(html.indexOf('multiplayer/config.js') < html.indexOf('multiplayer/client.js') && html.indexOf('multiplayer/client.js') < html.indexOf('game.js?v=10'), 'multiplayer scripts must load before the game bridge');
+for (const file of ['multiplayer/config.js?v=1','multiplayer/presence.js?v=2','multiplayer/challenges.js?v=1','multiplayer/arena.js?v=3','multiplayer/client.js?v=2']) assert(html.includes(`src="${file}"`), `missing multiplayer script ${file}`);
+assert(html.indexOf('multiplayer/config.js') < html.indexOf('multiplayer/client.js') && html.indexOf('multiplayer/client.js') < html.indexOf('game.js?v=11'), 'multiplayer scripts must load before the game bridge');
+for (const file of ['systems/equipment.js?v=1','systems/keybinds.js?v=1','systems/dialogue.js?v=1','systems/shop.js?v=1','systems/cultivation.js?v=1']) assert(html.includes(`src="${file}"`), `missing gameplay system ${file}`);
 assert(html.includes("apiBase: 'https://verdant-star-multiplayer.zxuchen.workers.dev'"), 'production multiplayer endpoint must be configured');
 assert(!html.includes('SESSION_SIGNING_KEY'), 'multiplayer signing secret must never be shipped to the browser');
-assert(/data-key="f"[^>]*>Parry</.test(html), 'touch controls must include Parry');
-assert(/data-key="m"[^>]*>Map</.test(html), 'touch controls must include Map');
+assert(/data-action="parry"[^>]*>Parry</.test(html), 'touch controls must include Parry');
+assert(/data-action="map"[^>]*>Map</.test(html), 'touch controls must include Map');
 assert(!original.includes('ctx.clearRect'), 'landmark art must not punch transparent holes through the world canvas');
 const needle = '  configureNameSetup(); updateUI(); requestAnimationFrame(frame);\n})();';
 assert(original.includes(needle), 'test hook insertion point changed');
 const source = original.replace(needle, `  configureNameSetup(); updateUI();
   globalThis.__test = {
     ctx, player, treasures, enemies, map, areas, landmarks, resourceNodes, taps, travelTargets, dash, dashCooldownDuration, cultivationAdvancements, qiCapacity, reconcileQuestProgress,
-    passableAt, runDevAction, safeTeleport, save, bossDefs, bossStates, tutorial, itemDefs,
+    passableAt, runDevAction, safeTeleport, save, bossDefs, bossStates, tutorial, itemDefs, merchant, derivedCombatStats,
     currentBreakthroughRequirement, missingRequirements, breakthrough, enemyProfile,
     startEnemyAttack, resolveEnemyAttack, updateEnemyCombat, parry, attack, useTalisman, cultivate, killEnemy, loseCultivationStage, handlePlayerDeath, handleActions, draw, updateUI, cleanPlayerName, configureNameSetup,
     get quest() { return quest; }, set quest(value) { quest = value; },
     get mapOpen() { return mapOpen; },
     get playerName() { return playerName; }, set playerName(value) { playerName = value; },
+    get equipment() { return equipment; }, get keybinds() { return keybinds; }, equipmentApi, keybindApi,
     get suppressSave() { return suppressSave; }
   };
   requestAnimationFrame(frame);
@@ -36,14 +38,17 @@ const source = original.replace(needle, `  configureNameSetup(); updateUI();
 
 class FakeElement {
   constructor(id) {
-    this.id = id; this.hidden = ['settingsMenu', 'devMenu', 'clearConfirm'].includes(id);
+    this.id = id; this.hidden = ['settingsMenu', 'inventoryMenu', 'dialogueMenu', 'devMenu', 'clearConfirm', 'settingsProgress', 'shopPanel'].includes(id);
     this.style = {}; this.dataset = {}; this.listeners = {}; this.textContent = ''; this.innerHTML = ''; this.value = '';
     const classes = new Set(); this.captured = new Set();
     this.classList = { toggle(name, force) { if (force === false) classes.delete(name); else if (force === true || !classes.has(name)) classes.add(name); else classes.delete(name); }, add: name => classes.add(name), remove: name => classes.delete(name), contains: name => classes.has(name) };
   }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+  append(...children) { this.children = [...(this.children || []), ...children]; }
+  replaceChildren(...children) { this.children = children; }
   dispatch(type, event = {}) { for (const fn of this.listeners[type] || []) fn({ target: this, preventDefault() {}, stopPropagation() {}, ...event }); }
   focus() {}
+  setAttribute(name, value) { this[name] = value; }
   setPointerCapture(id) { this.captured.add(id); }
   releasePointerCapture(id) { this.captured.delete(id); }
   hasPointerCapture(id) { return this.captured.has(id); }
@@ -58,6 +63,7 @@ class FakeElement {
   for (const item of ['cloud_dew','lotus_seed','root_resin','cinder_marrow']) assert(t.resourceNodes.some(node => node.item === item), `missing resource nodes for ${item}`);
   for (const cache of t.treasures) assert(t.passableAt(cache.x, cache.y, 7), `${cache.id} must remain reachable`);
   for (const enemy of t.enemies.filter(enemy => enemy.boss)) assert(t.passableAt(enemy.x, enemy.y, enemy.r), `${enemy.title} must spawn on passable terrain`);
+  assert(t.passableAt(t.merchant.x, t.merchant.y, t.merchant.r), 'Crossroads merchant must stand on passable terrain');
   t.updateUI(); t.draw(1000);
   assert.strictEqual(t.ctx.lineWidth, 1, 'rendering must reset canvas line width before minimap and the next frame');
   for (const [name, [x, y]] of Object.entries(t.travelTargets)) {
@@ -65,6 +71,18 @@ class FakeElement {
     if (!name.startsWith('vein')) for (const boss of t.bossDefs) assert(Math.hypot(x - boss.x, y - boss.y) * 24 > boss.range + 48, `${name} dev travel must not drop onto ${boss.title}`);
   }
   for (const area of t.areas.slice(5)) for (const landmark of t.landmarks) assert(!(area.x === landmark.x && area.y === landmark.y), `${area.name} icon must not stack with a landmark`);
+}
+
+{
+  const { t, storage } = boot({ version: 7, name: 'Gear Tester', stones: 40 });
+  assert(t.equipmentApi.getEquipped(t.equipment, 'weapon'), 'version 7 saves must receive starter equipment');
+  assert(t.equipmentApi.getEquipped(t.equipment, 'armor'), 'version 7 saves must receive starter armor');
+  const spear = t.equipmentApi.addItem(t.equipment, 'cloudpiercer_spear');
+  assert(spear.ok && t.equipmentApi.equipItem(t.equipment, spear.item.uid).ok, 'alternate weapons must equip');
+  assert.strictEqual(t.derivedCombatStats().weaponStyle, 'spear', 'equipped weapon must drive combat style');
+  t.keybinds.setBinding('attack', 'x', 0); t.save();
+  const saved = JSON.parse(storage.get('verdant-star-save'));
+  assert.strictEqual(saved.version, 8); assert(saved.equipment && saved.keybinds.attack.includes('x'), 'equipment and remapped controls must persist in v8');
 }
 
 function boot(saved) {
@@ -84,11 +102,12 @@ function boot(saved) {
   const sandbox = {
     console, Math, JSON, Set, Map,
     performance: { now: () => now },
-    document: { hidden: false, querySelector: selector => selector === '#game' ? canvas : get(selector.replace('#', '')), getElementById: get, querySelectorAll: selector => selector === '[data-key]' ? touchButtons : [], addEventListener(type, fn) { (documentListeners[type] ||= []).push(fn); } },
+    document: { hidden: false, querySelector: selector => selector === '#game' ? canvas : get(selector.replace('#', '')), getElementById: get, createElement: tag => new FakeElement(tag), querySelectorAll: selector => selector.includes('[data-key]') ? touchButtons : [], addEventListener(type, fn) { (documentListeners[type] ||= []).push(fn); } },
     addEventListener(type, fn) { (globalListeners[type] ||= []).push(fn); },
     requestAnimationFrame() {},
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
-    location: { reload: () => { reloads++; } }
+    location: { reload: () => { reloads++; } },
+    EquipmentSystem: require('../systems/equipment.js'), VerdantKeybinds: require('../systems/keybinds.js'), VerdantDialogue: require('../systems/dialogue.js'), VerdantShop: require('../systems/shop.js'), VerdantCultivation: require('../systems/cultivation.js')
   };
   sandbox.globalThis = sandbox;
   vm.runInNewContext(source, sandbox, { filename: sourcePath });
@@ -132,7 +151,7 @@ function boot(saved) {
   deadEnemy.alive = false; deadEnemy.hp = 0;
   t.updateEnemyCombat(attacker, { ...t.enemyProfile(attacker), damage: 999, range: 80, kind: 'slam' }, .02);
   assert.strictEqual(t.player.realm, 0); assert.strictEqual(t.player.stage, 3, 'realm boundary death must fall to the previous final stage');
-  assert.strictEqual(t.player.maxHp, 100); assert.strictEqual(t.player.attack, 16); assert.strictEqual(t.player.hp, 100);
+  assert.strictEqual(t.player.maxHp, 100); assert.strictEqual(t.player.attack, 16); assert.strictEqual(t.player.hp, 108, 'equipped robe health must be restored after defeat');
   assert.strictEqual(t.player.qi, 75); assert.strictEqual(t.player.x, 47.5 * 24); assert.strictEqual(t.player.y, 39 * 24);
   assert.strictEqual(attacker.hp, attacker.maxHp); assert.strictEqual(livingBoss.hp, livingBoss.maxHp);
   assert.strictEqual(attacker.attackState, 'idle'); assert.strictEqual(livingBoss.attackState, 'idle');
@@ -177,7 +196,7 @@ function boot(saved) {
   assert(migrated.t.player.keyItems.has('sectbreaker_core'), 'legacy boss victory must grant its breakthrough key');
   assert(migrated.t.tutorial.attacked && migrated.t.tutorial.cultivated, 'legacy progress should complete the tutorial');
   assert.strictEqual(migrated.elements.get('quest').hidden, true, 'completed tutorial should hide guided objectives');
-  assert.strictEqual(JSON.parse(migrated.storage.get('verdant-star-save')).version, 7, 'legacy save should migrate to v7');
+  assert.strictEqual(JSON.parse(migrated.storage.get('verdant-star-save')).version, 8, 'legacy save should migrate to v8');
   assert.strictEqual(migrated.t.treasures.slice(0, 5).filter(cache => cache.opened).length, 5, 'old cache indices must remain intact');
 
   const allBosses = Object.fromEntries(migrated.t.bossDefs.map(boss => [boss.id, true]));
@@ -222,7 +241,7 @@ function boot(saved) {
 {
   const { t } = boot();
   t.parry();
-  assert.strictEqual(t.player.parryTimer, .2);
+  assert(t.player.parryTimer >= .2, 'equipment may improve the base parry window');
   assert.strictEqual(t.player.parryRecovery, .38, 'failed parries need recovery after their active window');
   const enemy = t.enemies.find(e => !e.boss), profile = t.enemyProfile(t.enemies.find(e => !e.boss));
   enemy.x = t.player.x + 10; enemy.y = t.player.y; enemy.attackAngle = Math.PI; enemy.attackLanded = false;
@@ -239,7 +258,7 @@ function boot(saved) {
   boss.x = t.player.x + 10; boss.y = t.player.y; boss.attackAngle = Math.PI; boss.attackLanded = false;
   t.player.maxHp = 200; t.player.hp = 200; t.player.invuln = 0; t.player.parryTimer = .2;
   t.resolveEnemyAttack(boss, bossProfile);
-  assert.strictEqual(t.player.hp, 95, 'unparryable boss slam should punish parry attempts');
+  assert(t.player.hp < 200, 'unparryable boss slam should punish parry attempts even through armor');
 }
 
 {

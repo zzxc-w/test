@@ -253,6 +253,36 @@
     .dev-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; }
     .dev-group { min-width: 0; }
     .dev-group.wide { grid-column: 1 / -1; }
+    .menu-tabs { display: flex; flex-wrap: wrap; gap: 7px; margin: 0 0 14px; }
+    .menu-tabs button[aria-selected="true"] { border-color: var(--jade); color: #caffea; background: #1d3a32; }
+    .settings-pane[hidden] { display: none !important; }
+    .keybind-list { display: grid; grid-template-columns: minmax(130px, 1fr) auto; gap: 6px 12px; align-items: center; }
+    .keybind-list button { min-width: 112px; }
+    .keybind-list button.is-listening { border-color: var(--gold); color: #fff1b5; animation: listenPulse .8s steps(2) infinite; }
+    @keyframes listenPulse { 50% { background: #493b20; } }
+    .inventory-card { width: min(820px, 96vw); }
+    .inventory-layout { display: grid; grid-template-columns: minmax(210px, .75fr) minmax(300px, 1.25fr); gap: 18px; }
+    .equipment-slots { display: grid; gap: 8px; }
+    .equipment-slot { min-height: 62px !important; text-align: left; }
+    .equipment-slot strong, .bag-slot strong { display: block; color: #fff0bd; }
+    .equipment-slot small, .bag-slot small { display: block; margin-top: 2px; color: #8fa09a; }
+    .inventory-stats { margin-top: 10px; padding: 9px; border: 1px solid #40544d; background: #09110f; color: #b8ead4; white-space: pre-wrap; }
+    .bag-grid { display: grid; grid-template-columns: repeat(6, minmax(43px, 1fr)); gap: 5px; }
+    .bag-cell { aspect-ratio: 1; border: 1px solid #26343d; background: #0a1017; pointer-events: none; }
+    .bag-slot { aspect-ratio: 1; min-height: 54px !important; padding: 5px !important; overflow: hidden; text-align: left; font-size: .7rem; }
+    .bag-slot.empty { background: #0b1119; border-color: #29353e; }
+    .bag-slot.selected { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
+    .bag-slot[data-rarity="rare"] { border-color: #729ee0; }
+    .bag-slot[data-rarity="epic"] { border-color: #b17fe1; }
+    .item-detail { min-height: 82px; margin-top: 10px; padding: 9px; border: 1px solid #394a45; background: #09110f; color: #adb7b2; }
+    .item-actions { margin-top: 8px; }
+    .dialogue-card { width: min(600px, 94vw); }
+    .dialogue-speaker { color: var(--gold); letter-spacing: .08em; text-transform: uppercase; }
+    .dialogue-text { min-height: 62px; color: #e5dfce !important; line-height: 1.6; }
+    .shop-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+    .shop-item { text-align: left; }
+    .shop-item strong, .shop-item small { display: block; }
+    .shop-item small { color: #92a29c; margin-top: 3px; }
     @media (pointer: coarse), (max-width: 720px) {
       #touch { display: flex; }
       .bottom-help { display: none; }
@@ -264,6 +294,9 @@
       .menu-card { padding: 15px; }
       .dev-grid { grid-template-columns: 1fr; }
       .dev-group.wide { grid-column: auto; }
+      .inventory-layout { grid-template-columns: 1fr; }
+      .bag-grid { grid-template-columns: repeat(6, minmax(34px, 1fr)); }
+      .shop-grid { grid-template-columns: 1fr; }
     }
     @media (max-height: 540px) { #quest { display: none; } .topbar { top: 6px; } }
   </style>
@@ -292,22 +325,28 @@
     <div id="compass" class="panel"><span id="compassArrow">&#9650;</span><span id="compassText">Spirit vein nearby</span></div>
     <div id="messages" aria-live="polite"></div>
     <div id="interactPrompt" class="panel" aria-live="polite"></div>
-    <div class="panel bottom-help"><kbd>WASD</kbd> Move &nbsp; <kbd>Space</kbd> Sword &nbsp; <kbd>F</kbd> Parry &nbsp; <kbd>Shift</kbd> Dash &nbsp; <kbd>C</kbd> Cultivate &nbsp; <kbd>E</kbd> Gather &nbsp; <kbd>Q</kbd> Talisman &nbsp; <kbd>M</kbd> Map</div>
+    <div class="panel bottom-help"><kbd>WASD</kbd> Move &nbsp; <kbd>Space</kbd> Strike &nbsp; <kbd>F</kbd> Parry &nbsp; <kbd>Shift</kbd> Dash &nbsp; <kbd>E</kbd> Interact &nbsp; <kbd>I</kbd> Inventory &nbsp; <kbd>M</kbd> Map</div>
     <div id="touch" aria-label="Touch controls">
       <div class="pad">
-        <button class="touch-btn" data-key="w" aria-label="Move up">&#9650;</button><button class="touch-btn" data-key="a" aria-label="Move left">&#9664;</button><button class="touch-btn" data-key="s" aria-label="Move down">&#9660;</button><button class="touch-btn" data-key="d" aria-label="Move right">&#9654;</button>
+        <button class="touch-btn" data-action="moveUp" aria-label="Move up">&#9650;</button><button class="touch-btn" data-action="moveLeft" aria-label="Move left">&#9664;</button><button class="touch-btn" data-action="moveDown" aria-label="Move down">&#9660;</button><button class="touch-btn" data-action="moveRight" aria-label="Move right">&#9654;</button>
       </div>
       <div class="actions">
-        <button class="touch-btn" data-key="c">Cultivate</button><button class="touch-btn" data-key="e">Gather</button><button class="touch-btn" data-key="shift">Dash</button><button class="touch-btn" data-key="f">Parry</button><button class="touch-btn" data-key="q">Seal</button><button class="touch-btn" data-key="m">Map</button><button class="touch-btn" data-key=" ">Strike</button>
+        <button class="touch-btn" data-action="cultivate">Cultivate</button><button class="touch-btn" data-action="interact">Interact</button><button class="touch-btn" data-action="dash">Dash</button><button class="touch-btn" data-action="parry">Parry</button><button class="touch-btn" data-action="talisman">Seal</button><button class="touch-btn" data-action="map">Map</button><button class="touch-btn" data-action="attack">Strike</button><button class="touch-btn" data-action="inventory">Bag</button>
       </div>
     </div>
     <section id="settingsMenu" class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
       <div class="menu-card">
         <div class="menu-head"><h2 id="settingsTitle">Settings</h2><button id="closeSettings" type="button">Close</button></div>
-        <h3>Controls</h3>
-        <p><kbd>WASD</kbd> move, <kbd>Space</kbd> strike, <kbd>F</kbd> parry, <kbd>Shift</kbd> dash, <kbd>C</kbd> cultivate, <kbd>E</kbd> gather, <kbd>Q</kbd> cast a sword seal, and <kbd>M</kbd> expand the map.</p>
-        <h3>Breakthrough materials</h3>
-        <pre id="inventoryText" class="dev-status"></pre>
+        <div class="menu-tabs" role="tablist"><button type="button" data-settings-tab="controls" aria-selected="true">Keybinds</button><button type="button" data-settings-tab="progress" aria-selected="false">Journey</button></div>
+        <section id="settingsControls" class="settings-pane">
+          <p>Select a binding, then press a key. Touch controls remain in fixed positions.</p>
+          <div id="keybindList" class="keybind-list"></div>
+          <div class="menu-actions"><button id="resetKeybinds" type="button">Restore defaults</button></div>
+        </section>
+        <section id="settingsProgress" class="settings-pane" hidden>
+          <h3>Breakthrough materials</h3>
+          <pre id="inventoryText" class="dev-status"></pre>
+        </section>
         <div class="danger-zone">
           <h3>Clear progress</h3>
           <p>Deletes only this game's save from this device. This cannot be undone.</p>
@@ -317,6 +356,23 @@
             <button id="cancelClear" type="button">Cancel</button>
           </div>
         </div>
+      </div>
+    </section>
+    <section id="inventoryMenu" class="modal" role="dialog" aria-modal="true" aria-labelledby="inventoryTitle" hidden>
+      <div class="menu-card inventory-card">
+        <div class="menu-head"><h2 id="inventoryTitle">Cultivator Inventory</h2><button id="closeInventory" type="button">Close</button></div>
+        <div class="inventory-layout">
+          <section><h3>Equipped</h3><div id="equipmentSlots" class="equipment-slots"></div><pre id="equipmentStats" class="inventory-stats"></pre></section>
+          <section><h3>Backpack <span id="bagCount"></span></h3><div id="bagGrid" class="bag-grid"></div><div id="itemDetail" class="item-detail">Select an item to inspect it.</div><div class="menu-actions item-actions"><button id="equipItem" type="button" disabled>Equip</button><button id="unequipItem" type="button" disabled>Unequip</button></div></section>
+        </div>
+      </div>
+    </section>
+    <section id="dialogueMenu" class="modal" role="dialog" aria-modal="true" aria-labelledby="dialogueSpeaker" hidden>
+      <div class="menu-card dialogue-card">
+        <div class="menu-head"><h2 id="dialogueSpeaker">Wandering Merchant</h2><button id="closeDialogue" type="button">Leave</button></div>
+        <p id="dialogueText" class="dialogue-text"></p>
+        <div id="dialogueChoices" class="menu-actions"></div>
+        <section id="shopPanel" hidden><div id="shopBalance" class="dev-status"></div><div id="shopGrid" class="shop-grid"></div></section>
       </div>
     </section>
     <section id="devMenu" class="modal" role="dialog" aria-modal="true" aria-labelledby="devTitle" hidden>
@@ -333,12 +389,14 @@
           <section class="dev-group"><h3>Progress</h3><div class="menu-actions">
             <button data-dev-action="reset-tutorial">Reset tutorial</button><button data-dev-action="complete-tutorial">Complete tutorial</button>
             <button data-dev-action="grant-materials">Grant all materials</button><button data-dev-action="clear-materials">Clear materials</button>
+            <button data-dev-action="grant-spear-set">Grant spear set</button><button data-dev-action="grant-dual-set">Grant dual-blade set</button>
+            <button data-dev-action="grant-greatsword-set">Grant greatsword set</button><button data-dev-action="grant-sword-set">Grant sword set</button>
             <button data-dev-action="open-caches">Open all caches</button>
             <button data-dev-action="reset-caches">Reset caches</button><button data-dev-action="defeat-boss">Defeat boss</button>
             <button data-dev-action="respawn-boss">Respawn boss</button><button data-dev-action="trigger-attack">Trigger nearby attack</button>
           </div></section>
           <section class="dev-group wide"><h3>Travel</h3><div class="menu-actions">
-            <button data-dev-travel="crossroads">Crossroads</button><button data-dev-travel="vein-nw">NW vein</button>
+            <button data-dev-travel="crossroads">Crossroads</button><button data-dev-travel="merchant">Merchant</button><button data-dev-travel="vein-nw">NW vein</button>
             <button data-dev-travel="vein-ne">NE vein</button><button data-dev-travel="vein-sw">SW vein</button><button data-dev-travel="vein-se">SE vein</button>
             <button data-dev-travel="grove">Bamboo Grove</button><button data-dev-travel="monastery">Monastery</button>
             <button data-dev-travel="mere">Lotus Mere</button><button data-dev-travel="grave">Sword Grave</button><button data-dev-travel="ruins">Fallen Sect</button>
@@ -372,9 +430,14 @@
   <script src="multiplayer/config.js?v=1"></script>
   <script src="multiplayer/presence.js?v=2"></script>
   <script src="multiplayer/challenges.js?v=1"></script>
-  <script src="multiplayer/arena.js?v=2"></script>
+  <script src="multiplayer/arena.js?v=3"></script>
   <script src="multiplayer/client.js?v=2"></script>
   <script>globalThis.VERDANT_MULTIPLAYER_CONFIG = Object.freeze({ enabled: true, apiBase: 'https://verdant-star-multiplayer.zxuchen.workers.dev' });</script>
-  <script src="game.js?v=10"></script>
+  <script src="systems/equipment.js?v=1"></script>
+  <script src="systems/keybinds.js?v=1"></script>
+  <script src="systems/dialogue.js?v=1"></script>
+  <script src="systems/shop.js?v=1"></script>
+  <script src="systems/cultivation.js?v=1"></script>
+  <script src="game.js?v=11"></script>
 </body>
 </html>

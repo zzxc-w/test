@@ -23,9 +23,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate JavaScript
-        run: node --check game.js
+        run: |
+          node --check game.js
+          node --check systems/equipment.js
+          node --check systems/keybinds.js
+          node --check systems/dialogue.js
+          node --check systems/shop.js
+          node --check systems/cultivation.js
+          node --check multiplayer/arena.js
       - name: Run gameplay smoke tests
-        run: node tests/smoke-test.js game.js index.html
+        run: |
+          node tests/smoke-test.js game.js index.html
+          node --test systems/test/*.test.js
+          node --test multiplayer/test/client.test.js
       - uses: actions/configure-pages@v5
         with:
           enablement: true
@@ -35,4 +45,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-

@@ -27,6 +27,7 @@ Use a Cloudflare Worker with SQLite-backed Durable Objects and hibernating WebSo
 - exact production Origin allowlist, protocol/build/map version checks, message-size and rate limits;
 - anonymous server-issued session identity initially, with short-lived single-use WebSocket/arena tickets;
 - world presence updates at 4-5 Hz and authoritative arena simulation at 30 Hz with snapshots at 10-15 Hz;
+- frame-rate client presentation with local movement/action prediction, 75 ms opponent interpolation, input-sequence acknowledgements, RTT display, and smooth reconciliation; prediction is visual only and never authorizes hits or damage;
 - a 20-second reconnect grace period for iPad app switching, followed by forfeit.
 
 Cloudflare documents Durable Objects as WebSocket coordinators and supports SQLite-backed objects on the Workers Free plan. Hibernating sockets should be used for idle world rooms to avoid holding an object active unnecessarily.

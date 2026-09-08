@@ -7,7 +7,23 @@
 
   const clamp = (n, min, max) => Math.max(min, Math.min(max, Number(n) || 0));
   const ACTIONS = ["attack", "dash", "parry"];
-  const RULES = Object.freeze({ maxHp: 100, attackWindupMs: 170, attackActiveMs: 90, attackCooldownMs: 680, parryWindowMs: 155, parryCooldownMs: 780, dashInvulnerabilityMs: 190, dashCooldownMs: 950 });
+  const RULES = Object.freeze({
+    width: 720, height: 420, playerRadius: 14, moveSpeed: 190, dashDistance: 78,
+    maxHp: 100, attackWindupMs: 170, attackActiveMs: 90, attackCooldownMs: 680,
+    parryWindowMs: 155, parryCooldownMs: 780, dashInvulnerabilityMs: 190, dashCooldownMs: 950
+  });
+
+  const copyPlayer = (player) => Object.assign({}, player);
+  const normalized = (x, y) => {
+    const length = Math.hypot(Number(x) || 0, Number(y) || 0);
+    return length > .001 ? [(Number(x) || 0) / length, (Number(y) || 0) / length] : [0, 0];
+  };
+  const lerpAngle = (from, to, amount) => {
+    let difference = (Number(to) || 0) - (Number(from) || 0);
+    while (difference > Math.PI) difference -= Math.PI * 2;
+    while (difference < -Math.PI) difference += Math.PI * 2;
+    return (Number(from) || 0) + difference * amount;
+  };
 
   class ArenaClient {
     constructor(options) {
@@ -24,33 +40,150 @@
       this.names = Object.create(null); this.seq = 0; this.lastInputAt = -Infinity;
       this.lastInput = { moveX: 0, moveY: 0, aimX: 1, aimY: 0, attack: false, dash: false, parry: false };
       this.pendingActions = { attack: false, dash: false, parry: false };
+      this.snapshotBuffer = []; this.localRender = null; this.localAdvancedAt = 0; this.localCorrection = { x: 0, y: 0 };
+      this.sentInputs = new Map(); this.latencyMs = 0;
+      this.predicted = { attackAt: 0, attackReadyAt: 0, parryUntil: 0, parryReadyAt: 0, invulnerableUntil: 0, dashReadyAt: 0 };
     }
     start(message) {
       if (!message || !message.arenaId) return false;
       this.active = true; this.arenaId = String(message.arenaId); this.playerId = message.playerId == null ? null : String(message.playerId);
       this.snapshot = message.snapshot || null; this.snapshotReceivedAt = this.now();
+      if (this.snapshot) this._ingestRenderableSnapshot(this.snapshot, this.snapshotReceivedAt);
       this.names = Object.assign(Object.create(null), message.playerNames || {}); this.emit("start", message); return true;
     }
     receiveSnapshot(snapshot) {
       if (!this.active || !snapshot || (snapshot.arenaId && String(snapshot.arenaId) !== this.arenaId)) return false;
       if (this.snapshot && Number(snapshot.tick) <= Number(this.snapshot.tick)) return false;
-      this.snapshot = snapshot; this.snapshotReceivedAt = this.now(); this.emit("snapshot", snapshot); return true;
+      const receivedAt = this.now();
+      this.snapshot = snapshot; this.snapshotReceivedAt = receivedAt;
+      this._ingestRenderableSnapshot(snapshot, receivedAt);
+      this.emit("snapshot", snapshot); return true;
     }
     setInput(input, force) {
       if (!this.active) return false;
       input = input || {};
       const clean = { moveX: clamp(input.moveX, -1, 1), moveY: clamp(input.moveY, -1, 1), aimX: input.aimX == null ? this.lastInput.aimX : clamp(input.aimX, -1, 1), aimY: input.aimY == null ? this.lastInput.aimY : clamp(input.aimY, -1, 1), attack: Boolean(input.attack), dash: Boolean(input.dash), parry: Boolean(input.parry) };
       const now = this.now(), changed = Object.keys(clean).some((key) => clean[key] !== this.lastInput[key]);
+      this._advanceLocal(now);
       for (const action of ACTIONS) if (clean[action] && !this.lastInput[action]) this.pendingActions[action] = true;
+      this._predictAction(clean, now);
       this.lastInput = clean;
       // `force` means send an unchanged heartbeat, not bypass the 30 Hz wire cap.
       if (!force && !changed && now - this.lastInputAt < 1000 / this.inputHz) return false;
       if (now - this.lastInputAt < 1000 / this.inputHz) return false;
       const outgoing = Object.assign({}, clean);
       for (const action of ACTIONS) outgoing[action] = outgoing[action] || this.pendingActions[action];
-      const sent = this.send(Object.assign({ type: "arena_input", arenaId: this.arenaId, seq: ++this.seq }, outgoing));
+      const seq = ++this.seq;
+      const sent = this.send(Object.assign({ type: "arena_input", arenaId: this.arenaId, seq }, outgoing));
+      if (sent) { this.sentInputs.set(seq, now); while (this.sentInputs.size > 90) this.sentInputs.delete(this.sentInputs.keys().next().value); }
       if (sent) this.pendingActions = { attack: false, dash: false, parry: false };
       this.lastInputAt = now; return sent;
+    }
+    _serverNow(localNow) {
+      return this.snapshot ? Number(this.snapshot.serverTime || 0) + Math.max(0, localNow - this.snapshotReceivedAt) : localNow;
+    }
+    _predictAction(input, localNow) {
+      const serverNow = this._serverNow(localNow);
+      const move = normalized(input.moveX, input.moveY);
+      const attackReadyAt = Math.max(this.predicted.attackReadyAt, Number(this.localRender?.attackReadyAt || 0));
+      const parryReadyAt = Math.max(this.predicted.parryReadyAt, Number(this.localRender?.parryReadyAt || 0));
+      const dashReadyAt = Math.max(this.predicted.dashReadyAt, Number(this.localRender?.dashReadyAt || 0));
+      const canAct = serverNow >= Number(this.localRender?.staggeredUntil || 0) && Number(this.localRender?.hp ?? 1) > 0;
+      if (canAct && input.attack && !this.lastInput.attack && serverNow >= attackReadyAt && serverNow >= this.predicted.parryUntil) {
+        this.predicted.attackAt = serverNow; this.predicted.attackReadyAt = serverNow + RULES.attackCooldownMs;
+      }
+      if (canAct && input.parry && !this.lastInput.parry && serverNow >= parryReadyAt && serverNow >= attackReadyAt) {
+        this.predicted.parryUntil = serverNow + RULES.parryWindowMs; this.predicted.parryReadyAt = serverNow + RULES.parryCooldownMs;
+      }
+      if (canAct && input.dash && !this.lastInput.dash && (move[0] || move[1]) && serverNow >= dashReadyAt) {
+        if (this.localRender) {
+          this.localRender.x = clamp(this.localRender.x + move[0] * RULES.dashDistance, RULES.playerRadius, RULES.width - RULES.playerRadius);
+          this.localRender.y = clamp(this.localRender.y + move[1] * RULES.dashDistance, RULES.playerRadius, RULES.height - RULES.playerRadius);
+        }
+        this.predicted.invulnerableUntil = serverNow + RULES.dashInvulnerabilityMs;
+        this.predicted.dashReadyAt = serverNow + RULES.dashCooldownMs;
+      }
+    }
+    _advanceLocal(localNow) {
+      if (!this.localRender) return;
+      if (!this.localAdvancedAt) this.localAdvancedAt = localNow;
+      const dt = clamp((localNow - this.localAdvancedAt) / 1000, 0, .05);
+      this.localAdvancedAt = localNow;
+      const serverNow = this._serverNow(localNow);
+      if (serverNow >= Number(this.localRender.staggeredUntil || 0)) {
+        const move = normalized(this.lastInput.moveX, this.lastInput.moveY);
+        this.localRender.x += move[0] * RULES.moveSpeed * dt;
+        this.localRender.y += move[1] * RULES.moveSpeed * dt;
+        if (move[0] || move[1]) this.localRender.facing = Math.atan2(this.lastInput.aimY, this.lastInput.aimX);
+      }
+      // Reconciliation is intentionally gradual for normal network error and immediate for
+      // collisions/knockback. The server remains the only source of actual position truth.
+      const correctionRate = Math.min(1, dt * 12);
+      this.localRender.x += this.localCorrection.x * correctionRate;
+      this.localRender.y += this.localCorrection.y * correctionRate;
+      this.localCorrection.x *= 1 - correctionRate; this.localCorrection.y *= 1 - correctionRate;
+      this.localRender.x = clamp(this.localRender.x, RULES.playerRadius, RULES.width - RULES.playerRadius);
+      this.localRender.y = clamp(this.localRender.y, RULES.playerRadius, RULES.height - RULES.playerRadius);
+    }
+    _ingestRenderableSnapshot(snapshot, receivedAt) {
+      this.snapshotBuffer.push({ receivedAt, snapshot });
+      if (this.snapshotBuffer.length > 8) this.snapshotBuffer.shift();
+      const local = Array.isArray(snapshot.players) ? snapshot.players.find((player) => String(player.id) === this.playerId) : null;
+      if (!local) return;
+      const ack = Number(local.lastInputSeq);
+      if (Number.isSafeInteger(ack) && this.sentInputs.has(ack)) {
+        const sample = Math.max(0, receivedAt - this.sentInputs.get(ack));
+        this.latencyMs = this.latencyMs ? this.latencyMs * .8 + sample * .2 : sample;
+        for (const seq of Array.from(this.sentInputs.keys())) if (seq <= ack) this.sentInputs.delete(seq);
+      }
+      const move = normalized(this.lastInput.moveX, this.lastInput.moveY);
+      const projectionSeconds = Math.min(.12, this.latencyMs / 2000);
+      const targetX = clamp(Number(local.x) + move[0] * RULES.moveSpeed * projectionSeconds, RULES.playerRadius, RULES.width - RULES.playerRadius);
+      const targetY = clamp(Number(local.y) + move[1] * RULES.moveSpeed * projectionSeconds, RULES.playerRadius, RULES.height - RULES.playerRadius);
+      const awaitingDash = this.predicted.invulnerableUntil > Number(local.invulnerableUntil || 0) + 120
+        && Number(snapshot.serverTime || 0) < this.predicted.invulnerableUntil;
+      if (!this.localRender) {
+        this.localRender = copyPlayer(local); this.localRender.x = targetX; this.localRender.y = targetY; this.localAdvancedAt = receivedAt;
+      } else {
+        const dx = targetX - this.localRender.x, dy = targetY - this.localRender.y;
+        if (Math.hypot(dx, dy) > 90 || Number(local.hp) < Number(this.localRender.hp)) {
+          this.localRender.x = targetX; this.localRender.y = targetY; this.localCorrection = { x: 0, y: 0 };
+        } else if (!awaitingDash) this.localCorrection = { x: dx, y: dy };
+        Object.assign(this.localRender, local, { x: this.localRender.x, y: this.localRender.y });
+      }
+      for (const field of Object.keys(this.predicted)) if (Number(local[field] || 0) >= this.predicted[field] - 120) this.predicted[field] = 0;
+    }
+    getRenderablePlayers(localNow) {
+      localNow = localNow == null ? this.now() : localNow;
+      this._advanceLocal(localNow);
+      if (!this.snapshot || !Array.isArray(this.snapshot.players)) return [];
+      const targetAt = localNow - 75;
+      let before = this.snapshotBuffer[0], after = this.snapshotBuffer[this.snapshotBuffer.length - 1];
+      for (let index = 0; index < this.snapshotBuffer.length; index += 1) {
+        const entry = this.snapshotBuffer[index];
+        if (entry.receivedAt <= targetAt) before = entry;
+        if (entry.receivedAt >= targetAt) { after = entry; break; }
+      }
+      const span = Math.max(1, after.receivedAt - before.receivedAt);
+      const amount = clamp((targetAt - before.receivedAt) / span, 0, 1);
+      return this.snapshot.players.map((latest) => {
+        const id = String(latest.id);
+        if (id === this.playerId && this.localRender) {
+          const player = copyPlayer(this.localRender), serverNow = this._serverNow(localNow);
+          if (this.predicted.attackAt && serverNow < this.predicted.attackReadyAt) player.attackAt = this.predicted.attackAt;
+          if (this.predicted.parryUntil && serverNow < this.predicted.parryUntil) player.parryUntil = this.predicted.parryUntil;
+          if (this.predicted.invulnerableUntil && serverNow < this.predicted.invulnerableUntil) player.invulnerableUntil = this.predicted.invulnerableUntil;
+          return player;
+        }
+        const a = before && before.snapshot.players.find((player) => String(player.id) === id);
+        const b = after && after.snapshot.players.find((player) => String(player.id) === id);
+        if (!a || !b) return copyPlayer(latest);
+        const player = copyPlayer(latest);
+        player.x = Number(a.x) + (Number(b.x) - Number(a.x)) * amount;
+        player.y = Number(a.y) + (Number(b.y) - Number(a.y)) * amount;
+        player.facing = lerpAngle(a.facing, b.facing, amount);
+        return player;
+      });
     }
     end(message) { if (this.active) { this.emit("end", message || {}); this.reset(); } }
   }
@@ -120,7 +253,7 @@
     for (const [label, action, column, row] of [["UP","up",2,1],["LEFT","left",1,2],["DOWN","down",2,3],["RIGHT","right",3,2]]) { const button = makeControl(label, action); button.style.gridColumn = column; button.style.gridRow = row; movement.appendChild(button); } root.appendChild(movement);
     const actions = doc.createElement("div"); actions.style.cssText = "position:absolute;right:max(14px,env(safe-area-inset-right));bottom:max(14px,env(safe-area-inset-bottom));display:grid;grid-template-columns:repeat(2,70px);gap:9px";
     const attack = makeControl("Attack", "attack"), parry = makeControl("Parry", "parry"), dash = makeControl("Dash", "dash"); attack.style.width = parry.style.width = "70px"; dash.style.width = "149px"; dash.style.gridColumn = "1 / 3"; actions.append(attack, parry, dash); root.appendChild(actions); (options.parent || doc.body).appendChild(root);
-    const trails = new Map(), previous = new Map(); let endTimer = null, connectionMessage = ""; const localClock = () => arena.now ? arena.now() : Date.now();
+    const trails = new Map(), previous = new Map(); let endTimer = null, frameHandle = null, destroyed = false, connectionMessage = ""; const localClock = () => arena.now ? arena.now() : Date.now();
     leave.addEventListener("click", () => typeof arena.leave === "function" ? arena.leave() : arena.end({ reason: "left" }));
     const render = () => {
       root.hidden = !arena.active; if (!arena.active || !arena.snapshot) return;
@@ -128,7 +261,7 @@
       ctx.fillStyle = "#07110f"; ctx.fillRect(0, 0, 960, 540); ctx.fillStyle = "#13251f"; ctx.fillRect(120, 60, 720, 420);
       for (let y = 60; y < 480; y += 24) for (let x = 120; x < 840; x += 24) { ctx.fillStyle = ((x + y) / 24) % 2 ? "#172c24" : "#142820"; ctx.fillRect(x, y, 24, 24); }
       ctx.strokeStyle = "#9d8048"; ctx.lineWidth = 5; ctx.strokeRect(117, 57, 726, 426); ctx.strokeStyle = "rgba(218,184,103,.18)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(480, 270, 92, 0, Math.PI * 2); ctx.stroke();
-      const players = Array.isArray(arena.snapshot.players) ? arena.snapshot.players : [];
+      const players = typeof arena.getRenderablePlayers === "function" ? arena.getRenderablePlayers(localNow) : (Array.isArray(arena.snapshot.players) ? arena.snapshot.players : []);
       for (const player of players) { const id = String(player.id), old = previous.get(id); if (old && Math.hypot(Number(player.x) - old.x, Number(player.y) - old.y) > 35) trails.set(id, { x: old.x, y: old.y, until: localNow + 230 }); previous.set(id, { x: Number(player.x), y: Number(player.y) }); }
       for (const [id, trail] of trails) { if (trail.until <= localNow) { trails.delete(id); continue; } ctx.globalAlpha = (trail.until - localNow) / 230 * .45; ctx.fillStyle = id === arena.playerId ? "#65dce2" : "#ed746e"; ctx.fillRect(111 + trail.x, 43 + trail.y, 18, 32); ctx.globalAlpha = 1; }
       for (const player of players) {
@@ -137,14 +270,34 @@
         ctx.fillStyle = "#180f12"; ctx.fillRect(x - 31, y - 26, 62, 5); ctx.fillStyle = "#d84f55"; ctx.fillRect(x - 30, y - 25, 60 * clamp(Number(player.hp) / RULES.maxHp, 0, 1), 3); if (visual.staggered) { ctx.fillStyle = "#ffe18b"; ctx.fillText("STAGGERED", x, y - 40); }
       }
       const mine = players.find((player) => String(player.id) === arena.playerId); if (mine) { const visual = combatVisualState(mine, serverNow); drawCooldown(ctx, 356, "ATTACK", visual.attackCooldown, "#e8c86e"); drawCooldown(ctx, 442, "PARRY", visual.parryCooldown, "#65d9cb"); drawCooldown(ctx, 528, "DASH", visual.dashCooldown, "#73bfea"); }
-      status.textContent = `${connectionMessage || "Arena Realm"} · ${Math.max(0, Math.ceil(Number(arena.snapshot.timeLeft) || 0))}s`;
+      const elapsed = Math.max(0, localNow - Number(arena.snapshotReceivedAt || localNow)) / 1000;
+      const timeLeft = Math.max(0, Number(arena.snapshot.timeLeft || 0) - elapsed);
+      const latency = Number(arena.latencyMs) > 0 ? ` · ${Math.round(arena.latencyMs)}ms` : "";
+      status.textContent = `${connectionMessage || "Arena Realm"} · ${Math.ceil(timeLeft)}s${latency}`;
+    };
+    const animate = () => {
+      if (destroyed || !root.isConnected) return;
+      render();
+      if (doc.defaultView && typeof doc.defaultView.requestAnimationFrame === "function") frameHandle = doc.defaultView.requestAnimationFrame(animate);
     };
     const releaseAll = () => submitInput(input.releaseAll());
     const showEnd = (result) => { const won = result && result.winnerId === arena.playerId, draw = result && result.winnerId === "draw"; root.hidden = false; notice.textContent = result && (result.reason === "connection-lost" || result.reason === "connection-stalled") ? "Connection stalled — returning to the world" : result && result.reason === "left" ? "Leaving the arena — returning to the world" : draw ? "Draw — returning to the world" : won ? "Victory — returning to the world" : "Defeat — returning to the world"; notice.style.fontSize = "18px"; if (endTimer) clearTimeout(endTimer); endTimer = setTimeout(() => { root.hidden = true; notice.style.fontSize = "12px"; notice.textContent = "Move to aim · gold arc means attack · parry just before impact"; }, 1400); };
     const releaseWhenHidden = () => { if (doc.hidden) releaseAll(); };
     const unsubscribe = arena.subscribe((event, detail) => { if (event === "end") { releaseAll(); showEnd(detail); } if (event === "start") { connectionMessage = ""; previous.clear(); trails.clear(); } if (event === "start" || event === "snapshot") render(); });
     if (doc.defaultView) doc.defaultView.addEventListener("blur", releaseAll); doc.addEventListener("visibilitychange", releaseWhenHidden);
-    return { element: root, canvas, input, render, releaseAll, setConnectionState(state) { connectionMessage = state === "reconnecting" ? "Reconnecting…" : ""; render(); }, destroy() { if (endTimer) clearTimeout(endTimer); releaseAll(); unsubscribe(); if (doc.defaultView) doc.defaultView.removeEventListener("blur", releaseAll); doc.removeEventListener("visibilitychange", releaseWhenHidden); root.remove(); } };
+    if (doc.defaultView && typeof doc.defaultView.requestAnimationFrame === "function") frameHandle = doc.defaultView.requestAnimationFrame(animate);
+    return {
+      element: root, canvas, input, render, releaseAll,
+      setConnectionState(state) { connectionMessage = state === "reconnecting" ? "Reconnecting…" : ""; render(); },
+      destroy() {
+        destroyed = true;
+        if (frameHandle != null && doc.defaultView && typeof doc.defaultView.cancelAnimationFrame === "function") doc.defaultView.cancelAnimationFrame(frameHandle);
+        if (endTimer) clearTimeout(endTimer);
+        releaseAll(); unsubscribe();
+        if (doc.defaultView) doc.defaultView.removeEventListener("blur", releaseAll);
+        doc.removeEventListener("visibilitychange", releaseWhenHidden); root.remove();
+      }
+    };
   }
 
   return { ArenaClient, createArenaInputState, combatVisualState, drawPixelFighter, mountArenaOverlay };

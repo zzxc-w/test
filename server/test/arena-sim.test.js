@@ -18,6 +18,16 @@ test('arena snapshots include sanitized configured fighter names', () => {
   assert.deepEqual(snapshot.players.map((player) => player.name), ['Azure Crane', 'Jade Fox']);
 });
 
+test('arena snapshots acknowledge the latest accepted input without exposing client authority', () => {
+  const state = createArenaState(['a', 'b'], 1000);
+  applyArenaInput(state, 'a', input(7, { moveX: 1 }));
+  stepArena(state, 1034);
+  const fighter = publicArenaSnapshot(state, 1034).players.find((player) => player.id === 'a');
+  assert.equal(fighter.lastInputSeq, 7);
+  assert.equal('input' in fighter, false);
+  assert.equal('pendingActions' in fighter, false);
+});
+
 test('movement and dash remain inside the authoritative arena', () => {
   const state = createArenaState(['a', 'b'], 1000);
   applyArenaInput(state, 'a', input(1, { moveX: -1, dash: true }));

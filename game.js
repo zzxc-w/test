@@ -9,7 +9,7 @@
   const WORLD_W = 144, WORLD_H = 108;
   const TAU = Math.PI * 2;
   const SAVE_KEY = 'verdant-star-save';
-  const SAVE_VERSION = 7;
+  const SAVE_VERSION = 8;
   const DASH_DISTANCE = 84;
   const DASH_BASE_COOLDOWN = .72;
   const DASH_MIN_COOLDOWN = .36;
@@ -23,12 +23,19 @@
     return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
   };
 
-  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','caches','zone','time','quest','questText','messages','overlay','start','compass','compassArrow','compassText','interactPrompt','settingsButton','multiplayerButton','settingsMenu','closeSettings','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText','playerNameLabel','nameSetup','playerNameInput','nameError','returningName'].map(id => [id, document.getElementById(id)]));
+  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','caches','zone','time','quest','questText','messages','overlay','start','compass','compassArrow','compassText','interactPrompt','settingsButton','multiplayerButton','settingsMenu','closeSettings','settingsControls','settingsProgress','keybindList','resetKeybinds','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText','inventoryMenu','closeInventory','equipmentSlots','equipmentStats','bagGrid','bagCount','itemDetail','equipItem','unequipItem','dialogueMenu','closeDialogue','dialogueSpeaker','dialogueText','dialogueChoices','shopPanel','shopBalance','shopGrid','playerNameLabel','nameSetup','playerNameInput','nameError','returningName'].map(id => [id, document.getElementById(id)]));
   const keys = new Set(), taps = new Set(), keyboardKeys = new Set(), touchPointers = new Map(), touchKeyCounts = new Map();
   let started = false, paused = false, last = performance.now(), playTime = 0, shake = 0, flash = 0, runtimeErrorShown = false, mapOpen = false;
-  let activeMenu = null, menuWasPaused = false, suppressSave = false, loadedSaveVersion = 0, playerName = '';
+  let activeMenu = null, menuWasPaused = false, suppressSave = false, loadedSaveVersion = 0, playerName = '', remappingAction = null, selectedItemUid = null, dialogueSession = null;
   const dev = { invulnerable: false, noCooldowns: false };
   const multiplayerApi = globalThis.VerdantMultiplayer || null;
+  const equipmentApi = globalThis.EquipmentSystem;
+  const keybindApi = globalThis.VerdantKeybinds;
+  const dialogueApi = globalThis.VerdantDialogue;
+  const shopApi = globalThis.VerdantShop;
+  const cultivationApi = globalThis.VerdantCultivation;
+  let equipment = equipmentApi.createInventory();
+  let keybinds = keybindApi.createKeybinds();
   let multiplayer = null, multiplayerPanel = null, arenaOverlay = null, multiplayerPanelOpen = false;
 
   const colors = {
@@ -116,6 +123,7 @@
     ingredients: { cloud_dew: 0, lotus_seed: 0, root_resin: 0, cinder_marrow: 0 },
     keyItems: new Set()
   };
+  const merchant = { id: 'merchant_lian', name: 'Quartermaster Lian', x: 51.5 * TILE, y: 38.5 * TILE, r: 9 };
   let enemies = [], plants = [], particles = [], slashes = [], pickups = [], messages = [], quest = 0;
   const cacheOffsets = [[-3,2],[3,2],[3,2],[3,2],[-3,2],[-4,3],[4,2],[-4,2],[4,3]];
   let treasures = areas.map((a, i) => ({ id: `cache_${a.id}`, x: (a.x + cacheOffsets[i][0]) * TILE, y: (a.y + cacheOffsets[i][1]) * TILE, opened: false, area: a.name }));
@@ -134,6 +142,37 @@
   const tutorial = { attacked: false, cultivated: false };
   const bossStates = { jadehorn: false, tempest_crane: false, mirecoil_matriarch: false, sectbreaker: false, starfallen_warden: false };
   let resourceNodes = [], loadedResourceReadyAt = {};
+  const merchantDialogue = dialogueApi.createDialogueEngine({
+    quartermaster: {
+      start: 'welcome', nodes: {
+        welcome: { speaker: 'Quartermaster Lian', text: 'Every path needs the right vessel. I recover spirit arms from the roads and fit them to cultivators who can pay.', choices: [
+          { id: 'browse', text: 'Show me your wares.', next: 'shop' },
+          { id: 'ask', text: 'What are these fighting paths?', next: 'lore' },
+          { id: 'leave', text: 'Leave.', next: null }
+        ] },
+        lore: { speaker: 'Quartermaster Lian', text: 'Spears rule distance, twin blades chase openings, greatswords trade speed for crushing force, and the sect sword stays balanced. Match two pieces from a path to awaken a set bonus.', choices: [
+          { id: 'back', text: 'Back.', next: 'welcome' }, { id: 'browse', text: 'Browse wares.', next: 'shop' }
+        ] },
+        shop: { speaker: 'Quartermaster Lian', text: 'Spirit stones carry memory. Choose carefully—your pack has only thirty spaces, and larger arms occupy more room.', choices: [
+          { id: 'back', text: 'Ask something else.', next: 'welcome' }, { id: 'leave', text: 'Leave.', next: null }
+        ] }
+      }
+    }
+  });
+  const merchantCatalog = Object.fromEntries(Object.entries(equipmentApi.CATALOG).map(([id, item]) => [id, { ...item, buyPrice: item.price }]));
+  const merchantShop = shopApi.createShop({
+    catalog: merchantCatalog,
+    inventory: {
+      canAdd: itemId => !!equipmentApi.firstOpenPosition(equipment, itemId),
+      add: itemId => equipmentApi.addItem(equipment, itemId).ok
+    },
+    wallet: {
+      get: () => player.stones,
+      spend: amount => player.stones >= amount && ((player.stones -= amount) >= 0),
+      credit: amount => { player.stones += amount; }
+    },
+    onPurchase: offer => { addMessage(`Purchased ${equipmentApi.getDefinition(offer.itemId).name}.`, 'good'); save(); }
+  });
 
   const enemyTypes = {
     hare: { name: 'Ironhorn Hare', hp: 34, speed: 78, damage: 10, color: '#b78b72', xp: 14, r: 8, windup: .34, range: 32, recovery: .75, kind: 'lunge' },
@@ -246,7 +285,7 @@
 
   function sendWorldPresence(action = 'none', force = false) {
     if (!multiplayer || multiplayer.arena.active) return false;
-    const moving = keys.has('w') || keys.has('a') || keys.has('s') || keys.has('d') || keys.has('arrowup') || keys.has('arrowdown') || keys.has('arrowleft') || keys.has('arrowright');
+    const moving = actionHeld('moveUp') || actionHeld('moveDown') || actionHeld('moveLeft') || actionHeld('moveRight');
     return multiplayer.updatePresence({ x: player.x, y: player.y, facing: player.facing.toFixed(3), moving, action }, force);
   }
 
@@ -312,16 +351,16 @@
   function submitArenaInput() {
     if (!multiplayer?.arena.active) return;
     const touch = arenaOverlay?.input?.snapshot?.() || { moveX: 0, moveY: 0, aimX: 1, aimY: 0 };
-    let moveX = touch.moveX + ((keys.has('d') || keys.has('arrowright')) ? 1 : 0) - ((keys.has('a') || keys.has('arrowleft')) ? 1 : 0);
-    let moveY = touch.moveY + ((keys.has('s') || keys.has('arrowdown')) ? 1 : 0) - ((keys.has('w') || keys.has('arrowup')) ? 1 : 0);
+    let moveX = touch.moveX + (actionHeld('moveRight') ? 1 : 0) - (actionHeld('moveLeft') ? 1 : 0);
+    let moveY = touch.moveY + (actionHeld('moveDown') ? 1 : 0) - (actionHeld('moveUp') ? 1 : 0);
     moveX = clamp(moveX, -1, 1); moveY = clamp(moveY, -1, 1);
     const moving = Math.hypot(moveX, moveY);
     const aimX = moving ? moveX / moving : touch.aimX;
     const aimY = moving ? moveY / moving : touch.aimY;
     multiplayer.arena.setInput({
       moveX, moveY, aimX, aimY,
-      attack: touch.attack || taps.has(' '), parry: touch.parry || taps.has('f') || taps.has('l'),
-      dash: touch.dash || taps.has('shift') || taps.has('k')
+      attack: touch.attack || actionPressed('attack'), parry: touch.parry || actionPressed('parry'),
+      dash: touch.dash || actionPressed('dash')
     });
     taps.clear();
   }
@@ -349,7 +388,22 @@
 
   function dashCooldownDuration() {
     const reductions = Math.min(10, cultivationAdvancements());
-    return Math.max(DASH_MIN_COOLDOWN, DASH_BASE_COOLDOWN - reductions * DASH_COOLDOWN_STEP);
+    return Math.max(DASH_MIN_COOLDOWN, DASH_BASE_COOLDOWN - reductions * DASH_COOLDOWN_STEP) * derivedCombatStats().dashCooldownMultiplier;
+  }
+
+  function derivedCombatStats() { return equipmentApi.deriveStats(equipment); }
+  function effectiveMaxHp() { return player.maxHp + derivedCombatStats().maxHpBonus; }
+  function actionHeld(action) {
+    if (keys.has(`@${action}`)) return true;
+    return keybinds.get(action).some(key => keys.has(key));
+  }
+  function actionPressed(action) {
+    if (taps.has(`@${action}`)) return true;
+    return keybinds.get(action).some(key => taps.has(key));
+  }
+  function bindingLabel(action) {
+    const key = keybinds.get(action)[0] || '?';
+    return key === 'space' ? 'Space' : key === 'shift' ? 'Shift' : key.length === 1 ? key.toUpperCase() : key.replace('arrow', 'Arrow ');
   }
 
   function reconcileQuestProgress() {
@@ -367,7 +421,7 @@
     player.stage = clamp(Math.floor(player.stage) || 1, 1, realms[player.realm].stages);
     player.maxHp = clamp(Math.floor(player.maxHp) || 100, 1, 1000000);
     player.maxQi = clamp(Math.floor(player.maxQi) || realms[player.realm].qi, 1, 1000000);
-    player.hp = clamp(player.hp, 0, player.maxHp);
+    player.hp = clamp(player.hp, 0, effectiveMaxHp());
     player.qi = clamp(player.qi, 0, player.maxQi);
     player.attack = clamp(Math.floor(player.attack) || 16, 1, 1000000);
     player.stones = clamp(Math.floor(player.stones) || 0, 0, 100000000);
@@ -388,6 +442,7 @@
         herbs: player.herbs, kills: player.kills, attack: player.attack, quest, playTime,
         discoveries: [...player.discoveries], discoveredAreas: [...player.discoveredAreas], discoveredLandmarks: [...player.discoveredLandmarks], treasures: treasures.map(t => t.opened),
         ingredients: { ...player.ingredients }, keyItems: [...player.keyItems], tutorial: { ...tutorial }, bosses: { ...bossStates },
+        equipment: equipmentApi.serialize(equipment), keybinds: keybinds.snapshot(),
         resourceReadyAt: Object.fromEntries(resourceNodes.filter(n => !n.ready).map(n => [n.id, Date.now() + Math.max(0, n.respawn) * 1000])),
         bossDefeated: bossStates.sectbreaker
       }));
@@ -426,6 +481,8 @@
       }
       if (d.bosses && typeof d.bosses === 'object') for (const id of Object.keys(bossStates)) bossStates[id] = !!d.bosses[id];
       if (d.bossDefeated) bossStates.sectbreaker = true;
+      equipment = equipmentApi.deserialize(d.equipment);
+      keybinds = keybindApi.createKeybinds(d.keybinds);
       // Defeat flags are authoritative. Repair missing durable keys in legacy or
       // partially-written saves so a completed boss can never softlock progress.
       for (const boss of bossDefs) if (bossStates[boss.id]) player.keyItems.add(boss.keyItem);
@@ -467,10 +524,34 @@
     '3:1': { ingredients: { cinder_marrow: 3 } }, '3:2': { ingredients: { cinder_marrow: 5 } },
     '3:3': { stones: 30, keys: ['sectbreaker_core', 'starfallen_shard'] }
   };
+  const cultivationRecipes = Object.fromEntries(Object.entries(breakthroughRequirements).map(([id, requirement]) => {
+    const costs = [];
+    if (requirement.herbs) costs.push({ type: 'resource', id: 'herbs', amount: requirement.herbs });
+    if (requirement.stones) costs.push({ type: 'resource', id: 'stones', amount: requirement.stones });
+    for (const [item, amount] of Object.entries(requirement.ingredients || {})) costs.push({ type: 'resource', id: item, amount });
+    const requirements = (requirement.keys || []).map(item => ({ type: 'flag', id: item }));
+    return [id, { requirements, costs, result: { advance: true } }];
+  }));
+  const cultivationService = cultivationApi.createCultivationSystem({
+    recipes: cultivationRecipes,
+    resources: {
+      get: id => id === 'herbs' ? player.herbs : id === 'stones' ? player.stones : player.ingredients[id] || 0,
+      spend: (id, amount) => {
+        if (id === 'herbs') { if (player.herbs < amount) return false; player.herbs -= amount; return true; }
+        if (id === 'stones') { if (player.stones < amount) return false; player.stones -= amount; return true; }
+        if ((player.ingredients[id] || 0) < amount) return false; player.ingredients[id] -= amount; return true;
+      },
+      credit: (id, amount) => { if (id === 'herbs') player.herbs += amount; else if (id === 'stones') player.stones += amount; else player.ingredients[id] = (player.ingredients[id] || 0) + amount; }
+    },
+    state: { hasFlag: id => player.keyItems.has(id) },
+    applyResult: () => {}
+  });
 
   function currentBreakthroughRequirement() { return breakthroughRequirements[`${player.realm}:${player.stage}`] || null; }
 
   function missingRequirements(requirement) {
+    const recipeEntry = Object.entries(breakthroughRequirements).find(([, value]) => value === requirement);
+    if (recipeEntry) cultivationService.inspect(recipeEntry[0], { player });
     const missing = [];
     if (!requirement) return missing;
     if (requirement.herbs && player.herbs < requirement.herbs) missing.push(`${requirement.herbs} moonleaf herbs (${player.herbs})`);
@@ -491,8 +572,9 @@
     if (!vein) { addMessage('Cultivation only works inside a green spirit-vein beacon.', 'bad'); return; }
     player.meditating = true;
     if (player.qi < player.maxQi) {
-      player.qi = Math.min(player.maxQi, player.qi + 18);
-      player.hp = Math.min(player.maxHp, player.hp + 8);
+      const stats = derivedCombatStats();
+      player.qi = Math.min(player.maxQi, player.qi + Math.round(18 * stats.qiGainMultiplier));
+      player.hp = Math.min(effectiveMaxHp(), player.hp + 8);
       burst(player.x, player.y, '#77e6ba', 14, 38);
       addMessage('You draw rich vein qi into your meridians.', 'good');
       if (!tutorial.cultivated) { tutorial.cultivated = true; save(); }
@@ -515,7 +597,10 @@
       if (clue) addMessage(itemDefs[clue].hint);
       return false;
     }
-    if (!force) consumeRequirements(requirement);
+    if (!force && requirement) {
+      const recipeId = `${player.realm}:${player.stage}`, result = cultivationService.attempt(recipeId, { player });
+      if (!result.ok) { addMessage('Your gathered materials resist the breakthrough.', 'bad'); return false; }
+    }
     const r = realms[player.realm];
     player.qi = 0;
     player.stage++;
@@ -523,7 +608,7 @@
     const nr = realms[player.realm];
     player.maxQi = qiCapacity();
     player.maxHp += 18;
-    player.hp = player.maxHp;
+    player.hp = effectiveMaxHp();
     player.attack += 5;
     flash = 1; shake = 10;
     burst(player.x, player.y, '#f1d47a', 38, 135);
@@ -543,7 +628,7 @@
     while (player.xp >= player.xpNeed && levels++ < 20) {
       player.xp -= player.xpNeed;
       player.xpNeed = Math.max(20, Math.floor(player.xpNeed * 1.35));
-      player.attack += 2; player.maxHp += 5; player.hp = Math.min(player.maxHp, player.hp + 15);
+      player.attack += 2; player.maxHp += 5; player.hp = Math.min(effectiveMaxHp(), player.hp + 15);
       addMessage('Martial insight deepens your technique.', 'good');
     }
     if (levels >= 20) { player.xp = 0; player.xpNeed = Math.max(60, player.xpNeed); }
@@ -551,25 +636,26 @@
 
   function parry() {
     if (player.parryCd > 0 || player.meditating || player.parryRecovery > 0 || player.attackTimer > 0) return;
-    player.parryTimer = .2; player.parryCd = .55; player.parryRecovery = .38;
+    player.parryTimer = .2 * derivedCombatStats().parryWindowMultiplier; player.parryCd = .55; player.parryRecovery = .38;
     burst(player.x + Math.cos(player.facing) * 16, player.y + Math.sin(player.facing) * 16, '#fff1aa', 9, 70);
     sendWorldPresence('parry', true);
   }
 
   function attack() {
     if (player.attackCd > 0 || player.meditating || player.parryRecovery > 0 || player.parryTimer > 0) return;
-    player.attackCd = .34; player.attackTimer = .15;
+    const stats = derivedCombatStats(), style = stats.weaponStyle;
+    player.attackCd = .34 * stats.attackCooldownMultiplier; player.attackTimer = Math.min(.28, .15 * stats.attackCooldownMultiplier);
     sendWorldPresence('attack', true);
     if (!tutorial.attacked) { tutorial.attacked = true; save(); }
-    const reach = 38, ax = player.x + Math.cos(player.facing) * 20, ay = player.y + Math.sin(player.facing) * 20;
-    slashes.push({ x: player.x, y: player.y, a: player.facing, life: .18 });
+    const reach = 38 + stats.reachBonus, ax = player.x + Math.cos(player.facing) * (20 + stats.reachBonus * .35), ay = player.y + Math.sin(player.facing) * (20 + stats.reachBonus * .35);
+    slashes.push({ x: player.x, y: player.y, a: player.facing, life: .18, style, reach, arc: .8 + stats.attackArcBonus });
     for (const e of enemies) {
       if (!e.alive || Math.hypot(e.x - ax, e.y - ay) > reach) continue;
       const angle = Math.atan2(e.y - player.y, e.x - player.x);
       let delta = Math.atan2(Math.sin(angle - player.facing), Math.cos(angle - player.facing));
-      if (Math.abs(delta) < 1.25) {
+      if (Math.abs(delta) < 1.25 + stats.attackArcBonus) {
         const riposte = e.riposteWindow > 0;
-        e.hp -= (player.attack + Math.floor(player.qi * .035)) * (riposte ? 2.2 : 1);
+        e.hp -= (player.attack + Math.floor(player.qi * .035)) * stats.damageMultiplier * (riposte ? 2.2 : 1);
         if (riposte) { e.riposteWindow = 0; addMessage('Riposte! The opening collapses.', 'good'); }
         e.hit = .18; moveEntity(e, Math.cos(angle) * 14, Math.sin(angle) * 14, enemyTypes[e.type].r);
         burst(e.x, e.y, '#f4c477', 7, 80);
@@ -583,7 +669,7 @@
     if (player.qi < 20) { addMessage('You need 20 qi to cast a sword seal.', 'bad'); return; }
     player.qi -= 20; player.talismanCd = 2.2; shake = 5;
     for (const e of enemies) if (e.alive && dist(player, e) < 112) {
-      e.hp -= player.attack * .85 + 12; e.hit = .25;
+      e.hp -= player.attack * .85 * derivedCombatStats().damageMultiplier + 12; e.hit = .25;
       const a = Math.atan2(e.y - player.y, e.x - player.x); moveEntity(e, Math.cos(a) * 24, Math.sin(a) * 24, enemyTypes[e.type].r);
       burst(e.x, e.y, '#74e8bd', 10, 90); if (e.hp <= 0) killEnemy(e);
     }
@@ -597,6 +683,19 @@
     e.alive = false; e.respawn = e.boss ? 999999 : 18 + hash(player.kills, 9) * 18; player.kills++;
     const t = enemyTypes[e.type]; gainXp(t.xp);
     if (hash(player.kills, Math.floor(playTime), 12) > .43) pickups.push({ x: e.x, y: e.y, type: 'stone', life: 24, bob: hash(e.x|0,e.y|0)*TAU });
+    const bossGear = { jadehorn: 'steady_heart_pendant', tempest_crane: 'cloudpiercer_spear', mirecoil_matriarch: 'moonshadow_garb', sectbreaker: 'mountain_cleaver', starfallen_warden: 'earthpulse_medallion' };
+    const dropPools = {
+      hare: ['steady_heart_pendant', 'wanderer_robes'], wolf: ['twin_moon_blades', 'moonstep_charm'],
+      wisp: ['cloudpiercer_spear', 'far_horizon_jade'], serpent: ['moonshadow_garb', 'cloudpiercer_mail'],
+      guardian: ['mountain_guard_plate', 'earthpulse_medallion'], rogue: ['twin_moon_blades', 'mountain_cleaver']
+    };
+    const lootRoll = hash(player.kills, Math.floor(e.x + e.y), 84);
+    const gearId = e.boss ? bossGear[e.bossId] : lootRoll < .08 + derivedCombatStats().lootChanceBonus ? dropPools[e.type][Math.floor(hash(e.x | 0, e.y | 0, player.kills) * dropPools[e.type].length)] : null;
+    if (gearId) {
+      const drop = equipmentApi.addItem(equipment, gearId), definition = equipmentApi.getDefinition(gearId);
+      if (drop.ok) addMessage(`${definition.name} was added to your inventory.`, 'good');
+      else { player.stones += Math.max(2, Math.floor(definition.price / 3)); addMessage('Your pack is full; the gear dissolved into spirit stones.'); }
+    }
     burst(e.x, e.y, t.color, 18, 105);
     addMessage(`${t.name} was defeated.`, 'good');
     if (e.boss) {
@@ -623,11 +722,54 @@
     if (plant) {
       plant.ready = false; plant.respawn = 35; player.herbs++;
       burst(plant.x, plant.y, '#82c86b', 9, 45); addMessage('Gathered moonleaf herb.', 'good');
-      if (player.herbs % 3 === 0) { player.hp = Math.min(player.maxHp, player.hp + 25); addMessage('Three herbs mend your wounds.', 'good'); }
+      if (player.herbs % 3 === 0) { player.hp = Math.min(effectiveMaxHp(), player.hp + 25); addMessage('Three herbs mend your wounds.', 'good'); }
       reconcileQuestProgress();
       return;
     }
     addMessage('No ripe spirit herb is within reach.');
+  }
+
+  function interact() {
+    if (dist(player, merchant) < 58) { openMerchant(); return; }
+    gather();
+  }
+
+  function openMerchant() {
+    dialogueSession = merchantDialogue.start('quartermaster', { player, equipment });
+    openMenu('dialogue');
+    renderDialogue();
+  }
+
+  function renderDialogue() {
+    if (!dialogueSession) return;
+    const view = merchantDialogue.view(dialogueSession, { player, equipment });
+    if (view.ended) { closeMenu(); return; }
+    ui.dialogueSpeaker.textContent = view.speaker;
+    ui.dialogueText.textContent = view.text;
+    ui.dialogueChoices.replaceChildren();
+    for (const choice of view.choices) {
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = choice.text; button.disabled = choice.disabled;
+      button.addEventListener('click', () => { merchantDialogue.choose(dialogueSession, choice.id, { player, equipment }); renderDialogue(); });
+      ui.dialogueChoices.append(button);
+    }
+    ui.shopPanel.hidden = view.nodeId !== 'shop';
+    if (!ui.shopPanel.hidden) renderShop();
+  }
+
+  function renderShop() {
+    ui.shopBalance.textContent = `Spirit stones: ${player.stones}  ·  Backpack: ${equipmentApi.listBagItems(equipment).length} items`;
+    ui.shopGrid.replaceChildren();
+    for (const offer of merchantShop.list()) {
+      const definition = equipmentApi.getDefinition(offer.itemId), button = document.createElement('button');
+      button.type = 'button'; button.className = 'shop-item';
+      button.innerHTML = `<strong>${definition.name} · ${offer.total} stones</strong><small>${definition.build.replace('_', ' ')} ${definition.slot} · ${definition.description}</small>`;
+      button.addEventListener('click', () => {
+        const result = merchantShop.buy(offer.itemId, 1);
+        if (!result.ok) addMessage(result.code === 'insufficient_funds' ? 'You do not have enough spirit stones.' : result.code === 'inventory_full' ? 'Your backpack has no room for that item.' : 'The trade could not be completed.', 'bad');
+        renderShop(); updateUI();
+      });
+      ui.shopGrid.append(button);
+    }
   }
 
   function dash(dx, dy) {
@@ -648,13 +790,14 @@
   }
 
   function handleActions() {
-    const parryPressed = taps.has('f') || taps.has('l');
+    const parryPressed = actionPressed('parry');
     if (parryPressed) parry();
-    else if (taps.has(' ') || taps.has('j')) attack();
-    else if (taps.has('q')) useTalisman();
-    else if (taps.has('e')) gather();
-    else if (taps.has('c')) cultivate();
-    else if (taps.has('m')) mapOpen = !mapOpen;
+    else if (actionPressed('attack')) attack();
+    else if (actionPressed('talisman')) useTalisman();
+    else if (actionPressed('interact')) interact();
+    else if (actionPressed('cultivate')) cultivate();
+    else if (actionPressed('inventory')) openMenu('inventory');
+    else if (actionPressed('map')) mapOpen = !mapOpen;
     taps.clear();
   }
 
@@ -688,8 +831,9 @@
       burst(e.x, e.y, '#fff0a6', 16, 100); addMessage(`Parried ${e.title || enemyTypes[e.type].name}. Riposte now!`, 'good');
       return false;
     }
-    player.hp -= profile.damage; player.invuln = .55; shake = e.boss ? 12 : 7;
-    burst(player.x, player.y, '#e96961', 12, 95); addMessage(`${e.title || enemyTypes[e.type].name} strikes for ${profile.damage}.`, 'bad');
+    const damage = Math.max(1, Math.round(profile.damage * (1 - derivedCombatStats().defense)));
+    player.hp -= damage; player.invuln = .55; shake = e.boss ? 12 : 7;
+    burst(player.x, player.y, '#e96961', 12, 95); addMessage(`${e.title || enemyTypes[e.type].name} strikes for ${damage}.`, 'bad');
     if (player.hp <= 0) { handlePlayerDeath(); return true; }
     return false;
   }
@@ -714,7 +858,7 @@
   function handlePlayerDeath() {
     const oldQi = player.qi, lostStage = loseCultivationStage();
     player.qi = Math.min(player.maxQi, Math.floor(oldQi * .75));
-    player.hp = player.maxHp; player.x = 47.5 * TILE; player.y = 39 * TILE;
+    player.hp = effectiveMaxHp(); player.x = 47.5 * TILE; player.y = 39 * TILE;
     Object.assign(player, {
       attackCd: 0, attackTimer: 0, dashCd: 0, invuln: 2, talismanCd: 0,
       parryTimer: 0, parryCd: 0, parryRecovery: 0, meditating: false
@@ -759,13 +903,13 @@
     if (dev.noCooldowns) player.attackCd = player.dashCd = player.talismanCd = player.parryCd = 0;
     player.meditating = false;
 
-    let dx = (keys.has('d') || keys.has('arrowright') ? 1 : 0) - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
-    let dy = (keys.has('s') || keys.has('arrowdown') ? 1 : 0) - (keys.has('w') || keys.has('arrowup') ? 1 : 0);
-    const parryPressed = taps.has('f') || taps.has('l');
-    const dashPressed = !parryPressed && (taps.has('shift') || taps.has('k'));
+    let dx = (actionHeld('moveRight') ? 1 : 0) - (actionHeld('moveLeft') ? 1 : 0);
+    let dy = (actionHeld('moveDown') ? 1 : 0) - (actionHeld('moveUp') ? 1 : 0);
+    const parryPressed = actionPressed('parry');
+    const dashPressed = !parryPressed && actionPressed('dash');
     if (dx || dy) {
       const n = Math.hypot(dx, dy); dx /= n; dy /= n; player.facing = Math.atan2(dy, dx);
-      if (!dashPressed) moveEntity(player, dx * player.speed * dt, dy * player.speed * dt, player.r);
+      if (!dashPressed) moveEntity(player, dx * player.speed * derivedCombatStats().moveSpeedMultiplier * dt, dy * player.speed * derivedCombatStats().moveSpeedMultiplier * dt, player.r);
     }
     if (dashPressed) dash(dx, dy);
     handleActions();
@@ -817,7 +961,8 @@
   }
 
   function updateUI() {
-    ui.hpFill.style.width = `${100 * player.hp / player.maxHp}%`; ui.hpText.textContent = `${Math.ceil(player.hp)} / ${player.maxHp}`;
+    const maxHp = effectiveMaxHp();
+    ui.hpFill.style.width = `${100 * player.hp / maxHp}%`; ui.hpText.textContent = `${Math.ceil(player.hp)} / ${maxHp}`;
     ui.qiFill.style.width = `${100 * player.qi / player.maxQi}%`; ui.qiText.textContent = `${Math.floor(player.qi)} / ${player.maxQi} qi`;
     ui.xpFill.style.width = `${100 * player.xp / player.xpNeed}%`;
     ui.realm.textContent = `${realms[player.realm].name} \u00b7 ${roman(player.stage)}`;
@@ -832,23 +977,25 @@
     const veinDistance = Math.round(Math.hypot(nearest.x * TILE - player.x, nearest.y * TILE - player.y) / TILE);
     ui.compassArrow.style.transform = `rotate(${veinAngle + Math.PI / 2}rad)`;
     const nearVein = Math.hypot(player.x / TILE - (nearest.x + .5), player.y / TILE - (nearest.y + .5)) < 2.25;
-    ui.compassText.textContent = nearVein ? 'Inside a spirit vein \u2014 press C to cultivate' : `Nearest spirit vein \u00b7 ${veinDistance} steps`;
+    ui.compassText.textContent = nearVein ? `Inside a spirit vein \u2014 press ${bindingLabel('cultivate')} to cultivate` : `Nearest spirit vein \u00b7 ${veinDistance} steps`;
     const tutorialDone = tutorial.attacked && tutorial.cultivated;
     ui.quest.hidden = tutorialDone; ui.compass.hidden = tutorialDone;
     if (!tutorialDone) {
       const lessons = [];
-      if (!tutorial.attacked) lessons.push('Press <em>Space</em> to strike. Time <em>F</em> against a gold flash to parry.');
-      if (!tutorial.cultivated) lessons.push('Follow the spirit compass to a green vein and press <em>C</em> to cultivate.');
+      if (!tutorial.attacked) lessons.push(`Press <em>${bindingLabel('attack')}</em> to strike. Time <em>${bindingLabel('parry')}</em> against a gold flash to parry.`);
+      if (!tutorial.cultivated) lessons.push(`Follow the spirit compass to a green vein and press <em>${bindingLabel('cultivate')}</em> to cultivate.`);
       ui.questText.innerHTML = lessons.join('<br>');
     }
+    const nearMerchant = dist(player, merchant) < 58;
     const nearbyChest = treasures.find(t => !t.opened && dist(player, t) < 58);
     const nearbyNode = resourceNodes.find(n => n.ready && dist(player, n) < 42);
     const nearbyHerb = plants.find(p => p.ready && dist(player, p) < 42);
     let prompt = '';
-    if (nearbyChest) prompt = 'E \u00b7 Open ancient cache';
-    else if (nearbyNode) prompt = `E \u00b7 Gather ${itemDefs[nearbyNode.item].name}`;
-    else if (nearbyHerb) prompt = 'E \u00b7 Gather glowing moonleaf';
-    else if (nearVein) prompt = 'C \u00b7 Cultivate in the spirit vein';
+    if (nearMerchant) prompt = `${bindingLabel('interact')} \u00b7 Speak with ${merchant.name}`;
+    else if (nearbyChest) prompt = `${bindingLabel('interact')} \u00b7 Open ancient cache`;
+    else if (nearbyNode) prompt = `${bindingLabel('interact')} \u00b7 Gather ${itemDefs[nearbyNode.item].name}`;
+    else if (nearbyHerb) prompt = `${bindingLabel('interact')} \u00b7 Gather glowing moonleaf`;
+    else if (nearVein) prompt = `${bindingLabel('cultivate')} \u00b7 Cultivate in the spirit vein`;
     ui.interactPrompt.textContent = prompt;
     ui.interactPrompt.classList.toggle('show', !!prompt);
   }
@@ -897,6 +1044,17 @@
     ctx.globalAlpha = .16 + Math.sin(time * 3 + node.phase) * .04; ctx.fillStyle = color; ctx.fillRect(s.x - 11, s.y - 12 + bob, 22, 22); ctx.globalAlpha = 1;
     ctx.fillStyle = '#15201e'; ctx.fillRect(s.x - 6, s.y + 5, 12, 4);
     ctx.fillStyle = color; ctx.fillRect(s.x - 5, s.y - 7 + bob, 10, 12); ctx.fillStyle = '#f4f5dc'; ctx.fillRect(s.x - 2, s.y - 5 + bob, 4, 4);
+  }
+
+  function drawMerchant(cam, time) {
+    const s = screenPos(merchant.x, merchant.y, cam), bob = Math.sin(time * 2.4) > .8 ? 1 : 0;
+    ctx.fillStyle = '#0007'; ctx.fillRect(s.x - 11, s.y + 9, 22, 5);
+    ctx.fillStyle = '#263b45'; ctx.fillRect(s.x - 8, s.y - 6 + bob, 16, 18);
+    ctx.fillStyle = '#cfb38d'; ctx.fillRect(s.x - 5, s.y - 13 + bob, 10, 8);
+    ctx.fillStyle = '#49344f'; ctx.fillRect(s.x - 9, s.y - 3 + bob, 18, 7);
+    ctx.fillStyle = '#e4c069'; ctx.fillRect(s.x - 1, s.y - 3 + bob, 3, 9);
+    ctx.fillStyle = '#a77944'; ctx.fillRect(s.x + 10, s.y - 3, 8, 15); ctx.fillStyle = '#f0d27b'; ctx.fillRect(s.x + 12, s.y, 4, 4);
+    if (dist(player, merchant) < 120) { ctx.fillStyle = '#fff0bd'; ctx.font = '12px Georgia'; ctx.textAlign = 'center'; ctx.fillText(merchant.name, s.x, s.y - 22); }
   }
 
   function drawLandmarks(cam, time) {
@@ -1000,7 +1158,14 @@
     ctx.fillStyle = '#151d27'; ctx.fillRect(s.x - 7, s.y - 14, 14, 4); ctx.fillRect(s.x - 4, s.y - 17, 8, 4);
     ctx.fillStyle = '#bd574e'; ctx.fillRect(s.x - 8, s.y, 16, 6); ctx.fillStyle = '#e7bf69'; ctx.fillRect(s.x - 1, s.y, 2, 7);
     const fx = Math.cos(player.facing), fy = Math.sin(player.facing);
-    ctx.fillStyle = '#d9e2de'; ctx.fillRect(Math.round(s.x + fx * 9 - 1), Math.round(s.y + fy * 9 - 1), 3 + Math.abs(fx) * 8, 3 + Math.abs(fy) * 8);
+    const style = derivedCombatStats().weaponStyle;
+    ctx.fillStyle = style === 'greatsword' ? '#b7c0c5' : '#d9e2de';
+    if (style === 'spear') {
+      ctx.fillStyle = '#9b7147'; ctx.fillRect(Math.round(s.x + fx * 2 - 1), Math.round(s.y + fy * 2 - 1), 3 + Math.abs(fx) * 19, 3 + Math.abs(fy) * 19);
+      ctx.fillStyle = '#e4e9e5'; ctx.fillRect(Math.round(s.x + fx * 21 - 2), Math.round(s.y + fy * 21 - 2), 5, 5);
+    } else if (style === 'dual_swords') {
+      for (const side of [-1, 1]) ctx.fillRect(Math.round(s.x + fx * 9 - fy * side * 4 - 1), Math.round(s.y + fy * 9 + fx * side * 4 - 1), 3 + Math.abs(fx) * 8, 3 + Math.abs(fy) * 8);
+    } else ctx.fillRect(Math.round(s.x + fx * 9 - (style === 'greatsword' ? 2 : 1)), Math.round(s.y + fy * 9 - (style === 'greatsword' ? 2 : 1)), (style === 'greatsword' ? 5 : 3) + Math.abs(fx) * (style === 'greatsword' ? 12 : 8), (style === 'greatsword' ? 5 : 3) + Math.abs(fy) * (style === 'greatsword' ? 12 : 8));
     if (player.parryTimer > 0) {
       ctx.strokeStyle = '#fff0a6'; ctx.lineWidth = 4; ctx.beginPath();
       ctx.arc(s.x + fx * 7, s.y + fy * 7, 20, player.facing - 1.05, player.facing + 1.05); ctx.stroke();
@@ -1046,13 +1211,17 @@
     const x0 = Math.floor(cam.x / TILE), y0 = Math.floor(cam.y / TILE), x1 = Math.ceil((cam.x + W) / TILE), y1 = Math.ceil((cam.y + H) / TILE);
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (x >= 0 && y >= 0 && x < WORLD_W && y < WORLD_H) drawTile(map[y][x], x * TILE - cam.x, y * TILE - cam.y, x, y, time);
     drawLandmarks(cam, time);
+    drawMerchant(cam, time);
     plants.forEach(p => drawPlant(p, cam, time));
     resourceNodes.forEach(node => drawResourceNode(node, cam, time));
     pickups.forEach(p => { const s = screenPos(p.x, p.y, cam), b = Math.sin(time * 5 + p.bob) * 3; ctx.fillStyle = '#07110eaa'; ctx.fillRect(s.x - 6, s.y + 6, 12, 3); ctx.fillStyle = '#79e1b7'; ctx.fillRect(s.x - 4, s.y - 5 + b, 8, 9); ctx.fillStyle = '#c8ffe9'; ctx.fillRect(s.x - 1, s.y - 3 + b, 3, 4); });
     if (multiplayer && !multiplayer.arena.active) multiplayerApi.drawRemotePlayers(ctx, multiplayer.presence.getRenderable(Date.now()), { camera: cam, now: Date.now() });
     enemies.slice().sort((a,b)=>a.y-b.y).forEach(e => drawEnemy(e, cam, time));
     drawPlayer(cam);
-    slashes.forEach(slash => { const p = screenPos(slash.x, slash.y, cam); ctx.strokeStyle = `rgba(255,230,167,${slash.life / .18})`; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(p.x, p.y, 31, slash.a - .8, slash.a + .8); ctx.stroke(); });
+    slashes.forEach(slash => { const p = screenPos(slash.x, slash.y, cam), alpha = slash.life / .18; ctx.strokeStyle = `rgba(255,230,167,${alpha})`; ctx.lineWidth = slash.style === 'greatsword' ? 7 : 4; ctx.beginPath();
+      if (slash.style === 'spear') { ctx.moveTo(p.x + Math.cos(slash.a) * 12, p.y + Math.sin(slash.a) * 12); ctx.lineTo(p.x + Math.cos(slash.a) * slash.reach, p.y + Math.sin(slash.a) * slash.reach); }
+      else { ctx.arc(p.x, p.y, slash.style === 'dual_swords' ? 28 : 31 + Math.max(0, slash.reach - 38) * .3, slash.a - slash.arc, slash.a + slash.arc); if (slash.style === 'dual_swords') ctx.arc(p.x, p.y, 36, slash.a - slash.arc * .65, slash.a + slash.arc * .65); }
+      ctx.stroke(); });
     particles.forEach(p => { const s = screenPos(p.x,p.y,cam); ctx.globalAlpha = clamp(p.life / p.max, 0, 1); ctx.fillStyle = p.color; ctx.fillRect(s.x, s.y, p.size, p.size); }); ctx.globalAlpha = 1;
 
     // Time-of-day tint and a soft vignette.
@@ -1076,34 +1245,87 @@
     ].join('\n');
   }
 
+  function itemSummary(definition) {
+    const stats = definition.stats || {}, parts = [];
+    if (stats.damageMultiplier && stats.damageMultiplier !== 1) parts.push(`${Math.round((stats.damageMultiplier - 1) * 100)}% damage`);
+    if (stats.attackCooldownMultiplier && stats.attackCooldownMultiplier !== 1) parts.push(`${Math.round((1 - stats.attackCooldownMultiplier) * 100)}% attack speed`);
+    if (stats.reachBonus) parts.push(`${stats.reachBonus > 0 ? '+' : ''}${stats.reachBonus} reach`);
+    if (stats.defense) parts.push(`${Math.round(stats.defense * 100)}% defence`);
+    if (stats.maxHpBonus) parts.push(`+${stats.maxHpBonus} health`);
+    if (stats.moveSpeedMultiplier && stats.moveSpeedMultiplier !== 1) parts.push(`${Math.round((stats.moveSpeedMultiplier - 1) * 100)}% movement`);
+    return parts.join(' · ') || 'Balanced cultivation gear';
+  }
+
+  function renderInventory() {
+    const bag = equipmentApi.listBagItems(equipment), equipped = equipmentApi.getEquipped(equipment), stats = derivedCombatStats();
+    ui.equipmentSlots.replaceChildren();
+    for (const slot of equipmentApi.SLOTS) {
+      const item = equipped[slot], definition = item && equipmentApi.getDefinition(item.itemId), button = document.createElement('button');
+      button.type = 'button'; button.className = 'equipment-slot'; button.dataset.slot = slot;
+      const strong = document.createElement('strong'), small = document.createElement('small'); strong.textContent = `${slot[0].toUpperCase()}${slot.slice(1)} · ${definition ? definition.name : 'Empty'}`; small.textContent = definition ? itemSummary(definition) : 'Select a matching item from your backpack.';
+      button.append(strong, small); button.addEventListener('click', () => { selectedItemUid = item?.uid || null; renderInventory(); }); ui.equipmentSlots.append(button);
+    }
+    ui.bagGrid.replaceChildren();
+    for (let y = 0; y < equipment.rows; y++) for (let x = 0; x < equipment.cols; x++) {
+      const cell = document.createElement('div'); cell.className = 'bag-cell'; cell.style.gridColumn = String(x + 1); cell.style.gridRow = String(y + 1); ui.bagGrid.append(cell);
+    }
+    for (const item of bag) {
+      const definition = equipmentApi.getDefinition(item.itemId), button = document.createElement('button');
+      button.type = 'button'; button.className = `bag-slot${selectedItemUid === item.uid ? ' selected' : ''}`; button.dataset.rarity = definition.rarity;
+      button.style.gridColumn = `${item.x + 1} / span ${definition.size[0]}`; button.style.gridRow = `${item.y + 1} / span ${definition.size[1]}`;
+      const strong = document.createElement('strong'), small = document.createElement('small'); strong.textContent = definition.name; small.textContent = definition.build.replace('_', ' '); button.append(strong, small);
+      button.addEventListener('click', () => { selectedItemUid = item.uid; renderInventory(); }); ui.bagGrid.append(button);
+    }
+    const selected = equipmentApi.itemByUid(equipment, selectedItemUid), definition = selected && equipmentApi.getDefinition(selected.itemId);
+    ui.bagCount.textContent = `(${bag.length} carried · ${equipment.cols}×${equipment.rows} grid)`;
+    ui.itemDetail.textContent = definition ? `${definition.name} · ${definition.rarity}\n${definition.description}\n${itemSummary(definition)}` : 'Select an item to inspect it.';
+    ui.equipItem.disabled = !selected || Object.values(equipment.equipped).includes(selected.uid);
+    ui.unequipItem.disabled = !selected || !Object.values(equipment.equipped).includes(selected.uid);
+    ui.equipmentStats.textContent = `Weapon path: ${stats.weaponStyle.replace('_', ' ')}${stats.activeSet ? `\nSet awakened: ${stats.activeSet.replace('_', ' ')}` : ''}\nDamage: ${Math.round(stats.damageMultiplier * 100)}% · Defence: ${Math.round(stats.defense * 100)}%\nReach: ${38 + stats.reachBonus} · Move: ${Math.round(stats.moveSpeedMultiplier * 100)}%\nAttack cadence: ${Math.round(100 / stats.attackCooldownMultiplier)}%`;
+  }
+
+  function renderKeybinds() {
+    ui.keybindList.replaceChildren();
+    for (const action of keybindApi.ACTIONS) {
+      const label = document.createElement('span'), button = document.createElement('button'); label.textContent = action.label; button.type = 'button'; button.dataset.bindAction = action.id; button.textContent = remappingAction === action.id ? 'Press a key…' : keybinds.get(action.id).map(key => key === 'space' ? 'Space' : key.length === 1 ? key.toUpperCase() : key).join(' / ');
+      button.classList.toggle('is-listening', remappingAction === action.id); button.addEventListener('click', () => { remappingAction = action.id; renderKeybinds(); }); ui.keybindList.append(label, button);
+    }
+  }
+
   function updateDevStatus() {
     if (!ui.devStatus) return;
     ui.devStatus.textContent = [
       `Tile: ${(player.x / TILE).toFixed(1)}, ${(player.y / TILE).toFixed(1)} | ${zoneName()}`,
       `Realm: ${realms[player.realm].name} ${roman(player.stage)} | Tutorial: attack ${tutorial.attacked}, cultivate ${tutorial.cultivated}`,
-      `HP: ${Math.ceil(player.hp)} / ${player.maxHp} | Qi: ${Math.floor(player.qi)} / ${player.maxQi}`,
+      `HP: ${Math.ceil(player.hp)} / ${effectiveMaxHp()} | Qi: ${Math.floor(player.qi)} / ${player.maxQi}`,
       `Caches: ${openedCacheCount()} / ${treasures.length} | Bosses: ${Object.values(bossStates).filter(Boolean).length} / ${Object.keys(bossStates).length} | Keys: ${player.keyItems.size}`,
       `Dash cooldown: ${dashCooldownDuration().toFixed(3)}s | Invulnerable: ${dev.invulnerable} | No cooldowns: ${dev.noCooldowns}`
     ].join('\n');
   }
+
+  function menuElement(name) { return { settings: ui.settingsMenu, dev: ui.devMenu, inventory: ui.inventoryMenu, dialogue: ui.dialogueMenu }[name] || null; }
 
   function openMenu(name) {
     if (activeMenu === name) return;
     if (activeMenu) closeMenu();
     menuWasPaused = paused; paused = true; activeMenu = name;
     releaseAllInputs();
-    const menu = name === 'settings' ? ui.settingsMenu : ui.devMenu;
+    const menu = menuElement(name);
+    if (!menu) { activeMenu = null; paused = menuWasPaused; return; }
     menu.hidden = false;
-    if (name === 'dev') updateDevStatus(); else updateInventoryText();
+    if (name === 'dev') updateDevStatus();
+    else if (name === 'inventory') renderInventory();
+    else if (name === 'settings') { updateInventoryText(); renderKeybinds(); }
     const focusTarget = menu.querySelector('button');
     if (focusTarget) focusTarget.focus();
   }
 
   function closeMenu() {
     if (!activeMenu) return;
-    const menu = activeMenu === 'settings' ? ui.settingsMenu : ui.devMenu;
+    const closing = activeMenu, menu = menuElement(activeMenu);
     menu.hidden = true; activeMenu = null; paused = menuWasPaused;
     ui.clearConfirm.hidden = true;
+    remappingAction = null; if (closing === 'dialogue') dialogueSession = null;
     releaseAllInputs(); canvas.focus();
   }
 
@@ -1129,8 +1351,19 @@
     playTime = Math.max(0, (target - 330) / .42);
   }
 
+  function grantGearSet(build) {
+    let granted = 0;
+    for (const definition of Object.values(equipmentApi.CATALOG).filter(item => item.build === build)) {
+      const added = equipmentApi.addItem(equipment, definition.id);
+      if (!added.ok) continue;
+      equipmentApi.equipItem(equipment, added.item.uid); granted++;
+    }
+    player.hp = effectiveMaxHp();
+    addMessage(granted ? `Equipped the ${build.replace('_', ' ')} testing set.` : 'The backpack is too full for that set.', granted ? 'good' : 'bad');
+  }
+
   const travelTargets = {
-    crossroads: [47, 39], 'vein-nw': [14, 13], 'vein-ne': [80, 13], 'vein-sw': [14, 58], 'vein-se': [81, 57],
+    crossroads: [47, 39], merchant: [50, 38], 'vein-nw': [14, 13], 'vein-ne': [80, 13], 'vein-sw': [14, 58], 'vein-se': [81, 57],
     grove: [18, 29], monastery: [77, 30], mere: [17, 41], grave: [47, 15], ruins: [78, 41],
     mistglass: [116, 31], roots: [116, 42], kiln: [47, 78], starfall: [116, 77]
   };
@@ -1139,7 +1372,7 @@
     let persist = true, reconcile = true;
     const boss = enemies.filter(e => e.boss).sort((a, b) => dist(player, a) - dist(player, b))[0];
     switch (action) {
-      case 'heal': player.hp = player.maxHp; break;
+      case 'heal': player.hp = effectiveMaxHp(); break;
       case 'refill-qi': player.qi = player.maxQi; break;
       case 'add-herbs': player.herbs += 10; break;
       case 'add-stones': player.stones += 25; break;
@@ -1157,6 +1390,10 @@
         for (const item of Object.keys(player.ingredients)) player.ingredients[item] += 25;
         for (const item of Object.keys(itemDefs)) if (!(item in player.ingredients)) player.keyItems.add(item);
         break;
+      case 'grant-spear-set': grantGearSet('spear'); break;
+      case 'grant-dual-set': grantGearSet('dual_swords'); break;
+      case 'grant-greatsword-set': grantGearSet('greatsword'); break;
+      case 'grant-sword-set': grantGearSet('sword'); break;
       case 'clear-materials':
         player.herbs = player.stones = 0; for (const item of Object.keys(player.ingredients)) player.ingredients[item] = 0;
         player.keyItems = new Set(bossDefs.filter(b => bossStates[b.id]).map(b => b.keyItem)); reconcile = false; break;
@@ -1211,17 +1448,24 @@
       if (activeMenu === 'dev') closeMenu(); else openMenu('dev');
       return;
     }
+    if (remappingAction && activeMenu === 'settings') {
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === 'Escape') { remappingAction = null; renderKeybinds(); return; }
+      const key = keybindApi.normalizeKey(e);
+      if (key && !['ctrl','alt','meta'].includes(key)) { keybinds.setBinding(remappingAction, key, 0); remappingAction = null; renderKeybinds(); save(); }
+      return;
+    }
     if (activeMenu) {
       if (e.key === 'Escape') { e.preventDefault(); closeMenu(); }
       return;
     }
-    const k = e.key.toLowerCase();
-    if ([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(k)) e.preventDefault();
+    const k = keybindApi.normalizeKey(e);
+    if (['space','arrowup','arrowdown','arrowleft','arrowright'].includes(k)) e.preventDefault();
     if (!keys.has(k)) taps.add(k); keyboardKeys.add(k); keys.add(k);
     if (k === 'escape' && started) { paused = !paused; addMessage(paused ? 'The world waits.' : 'The journey continues.'); }
   });
   addEventListener('keyup', e => {
-    const k = e.key.toLowerCase(); keyboardKeys.delete(k);
+    const k = keybindApi.normalizeKey(e); keyboardKeys.delete(k);
     if (!touchKeyCounts.has(k)) keys.delete(k);
   });
   function releaseTouchPointer(pointerId) {
@@ -1252,8 +1496,8 @@
     if (multiplayer?.arena.active) multiplayer.arena.setInput({ moveX: 0, moveY: 0, aimX: 1, aimY: 0, attack: false, parry: false, dash: false }, true);
     else multiplayer?.updatePresence({ x: player.x, y: player.y, facing: player.facing.toFixed(3), moving: false, action: 'none' }, true);
   });
-  document.querySelectorAll('[data-key]').forEach(btn => {
-    const k = btn.dataset.key;
+  document.querySelectorAll('[data-key], [data-action]').forEach(btn => {
+    const k = btn.dataset.action ? `@${btn.dataset.action}` : btn.dataset.key;
     btn.addEventListener('pointerdown', e => {
       e.preventDefault(); releaseTouchPointer(e.pointerId);
       if (!keys.has(k)) taps.add(k);
@@ -1288,7 +1532,26 @@
   });
   ui.multiplayerButton.addEventListener('click', () => setMultiplayerPanel(!multiplayerPanelOpen));
   ui.closeSettings.addEventListener('click', closeMenu);
+  ui.closeInventory.addEventListener('click', closeMenu);
+  ui.closeDialogue.addEventListener('click', closeMenu);
   ui.closeDev.addEventListener('click', closeMenu);
+  ui.equipItem.addEventListener('click', () => {
+    const result = equipmentApi.equipItem(equipment, selectedItemUid);
+    if (!result.ok) addMessage('Your pack needs enough room for the replaced item.', 'bad'); else { player.hp = Math.min(player.hp, effectiveMaxHp()); save(); }
+    renderInventory(); updateUI();
+  });
+  ui.unequipItem.addEventListener('click', () => {
+    const selected = equipmentApi.itemByUid(equipment, selectedItemUid), definition = selected && equipmentApi.getDefinition(selected.itemId);
+    if (!definition) return;
+    const result = equipmentApi.unequipItem(equipment, definition.slot);
+    if (!result.ok) addMessage('Your pack needs more room before unequipping that item.', 'bad'); else { player.hp = Math.min(player.hp, effectiveMaxHp()); save(); }
+    renderInventory(); updateUI();
+  });
+  ui.resetKeybinds.addEventListener('click', () => { keybinds.reset(); remappingAction = null; renderKeybinds(); save(); });
+  document.querySelectorAll('[data-settings-tab]').forEach(button => button.addEventListener('click', () => {
+    const controls = button.dataset.settingsTab === 'controls'; ui.settingsControls.hidden = !controls; ui.settingsProgress.hidden = controls;
+    document.querySelectorAll('[data-settings-tab]').forEach(tab => tab.setAttribute('aria-selected', String(tab === button)));
+  }));
   ui.clearProgress.addEventListener('click', () => { ui.clearConfirm.hidden = false; ui.confirmClear.focus(); });
   ui.cancelClear.addEventListener('click', () => { ui.clearConfirm.hidden = true; ui.clearProgress.focus(); });
   ui.playerNameInput.addEventListener('input', () => { ui.nameError.textContent = ''; });
@@ -1322,6 +1585,7 @@
   addEventListener('beforeunload', () => { if (!suppressSave) save(); });
 
   const hadSave = load();
+  if (!hadSave) player.hp = effectiveMaxHp();
   populate();
   const questRepaired = reconcileQuestProgress();
   if (hadSave && (loadedSaveVersion < SAVE_VERSION || questRepaired)) save();

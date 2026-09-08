@@ -84,6 +84,46 @@ function testArena() {
   assert.equal(touchState.moveX, 0); assert.equal(touchState.moveY, 0); assert.equal(touchState.aimX, 1); assert.equal(touchState.aimY, 0);
 }
 
+function testArenaPredictionAndInterpolation() {
+  let now = 1000;
+  const arena = new ArenaClient({ now: () => now, send: () => true });
+  arena.start({ arenaId: "fast", playerId: "self" });
+  arena.receiveSnapshot({
+    arenaId: "fast", tick: 1, serverTime: 1000, timeLeft: 90,
+    players: [
+      { id: "self", x: 100, y: 100, facing: 0, hp: 100, lastInputSeq: -1 },
+      { id: "other", x: 500, y: 100, facing: Math.PI, hp: 100, lastInputSeq: -1 }
+    ]
+  });
+  arena.setInput({ moveX: 1, moveY: 0, aimX: 1, aimY: 0, dash: false }, true);
+  now = 1050;
+  let players = arena.getRenderablePlayers(now);
+  assert(players.find((player) => player.id === "self").x > 108, "local movement should render before another server packet arrives");
+
+  now = 1085;
+  arena.receiveSnapshot({
+    arenaId: "fast", tick: 2, serverTime: 1083, timeLeft: 89.9,
+    players: [
+      { id: "self", x: 115, y: 100, facing: 0, hp: 100, lastInputSeq: 1 },
+      { id: "other", x: 480, y: 100, facing: Math.PI, hp: 100, lastInputSeq: -1 }
+    ]
+  });
+  players = arena.getRenderablePlayers(1085);
+  const remoteX = players.find((player) => player.id === "other").x;
+  assert(remoteX < 500 && remoteX > 480, "remote movement should interpolate between buffered snapshots");
+  assert(arena.latencyMs > 0, "input acknowledgement should produce a round-trip latency estimate");
+
+  arena.setInput({ moveX: 1, moveY: 0, aimX: 1, aimY: 0, dash: true }, true);
+  const beforeDash = arena.localRender.x;
+  now = 1120;
+  players = arena.getRenderablePlayers(now);
+  assert(players.find((player) => player.id === "self").x >= beforeDash, "predicted dash must never move backwards while awaiting authority");
+
+  arena.setInput({ moveX: 1, moveY: 0, aimX: 1, aimY: 0, dash: false, attack: true }, true);
+  const mine = arena.getRenderablePlayers(now).find((player) => player.id === "self");
+  assert(Number(mine.attackAt) > 0, "local attack animation should begin before its server acknowledgement");
+}
+
 class FakeSocket {
   static instances = [];
   constructor(url) { this.url = url; this.readyState = 0; this.sent = []; FakeSocket.instances.push(this); }
@@ -157,7 +197,7 @@ async function testArenaWatchdog() {
 }
 
 async function main() {
-  testConfig(); testPresence(); testChallenges(); testArena(); await testClient(); await testArenaWatchdog();
+  testConfig(); testPresence(); testChallenges(); testArena(); testArenaPredictionAndInterpolation(); await testClient(); await testArenaWatchdog();
   console.log("multiplayer browser client tests passed");
 }
 
