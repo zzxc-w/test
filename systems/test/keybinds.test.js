@@ -14,6 +14,7 @@ test("defaults retain keyboard alternatives", () => {
   assert.equal(keys.matches("moveUp", "ArrowUp"), true);
   assert.equal(keys.matches("attack", { key: " " }), true);
   assert.deepEqual(keys.actionsFor("q"), ["talisman"]);
+  assert.deepEqual(keys.actionsFor("r"), ["skill"]);
 });
 
 test("remapping swaps a conflicting binding without duplicates", () => {

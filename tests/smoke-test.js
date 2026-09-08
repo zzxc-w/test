@@ -8,16 +8,17 @@ const original = fs.readFileSync(sourcePath, 'utf8');
 const html = fs.readFileSync(htmlPath, 'utf8');
 const htmlIds = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
 assert.strictEqual(new Set(htmlIds).size, htmlIds.length, 'HTML IDs must be unique');
-for (const id of ['settingsButton','multiplayerButton','settingsMenu','closeSettings','keybindList','inventoryMenu','closeInventory','dialogueMenu','closeDialogue','equipmentSlots','bagGrid','dropItem','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText','playerNameLabel','nameSetup','playerNameInput','nameError','returningName']) {
+for (const id of ['settingsButton','multiplayerButton','settingsMenu','closeSettings','keybindList','inventoryMenu','closeInventory','dialogueMenu','closeDialogue','storageMenu','closeStorage','storageBagList','storageChestList','depositItem','withdrawItem','equipmentSlots','bagGrid','dropItem','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText','playerNameLabel','nameSetup','playerNameInput','nameError','returningName']) {
   assert(htmlIds.includes(id), `missing UI element #${id}`);
 }
 for (const file of ['multiplayer/config.js?v=1','multiplayer/presence.js?v=2','multiplayer/drops.js?v=1','multiplayer/challenges.js?v=1','multiplayer/arena.js?v=3','multiplayer/client.js?v=3']) assert(html.includes(`src="${file}"`), `missing multiplayer script ${file}`);
-assert(html.indexOf('multiplayer/config.js') < html.indexOf('multiplayer/drops.js') && html.indexOf('multiplayer/drops.js') < html.indexOf('multiplayer/client.js') && html.indexOf('multiplayer/client.js') < html.indexOf('game.js?v=12'), 'multiplayer scripts must load before the game bridge');
-for (const file of ['systems/equipment.js?v=1','systems/keybinds.js?v=1','systems/dialogue.js?v=1','systems/shop.js?v=1','systems/cultivation.js?v=1']) assert(html.includes(`src="${file}"`), `missing gameplay system ${file}`);
+assert(html.indexOf('multiplayer/config.js') < html.indexOf('multiplayer/drops.js') && html.indexOf('multiplayer/drops.js') < html.indexOf('multiplayer/client.js') && html.indexOf('multiplayer/client.js') < html.indexOf('game.js?v=13'), 'multiplayer scripts must load before the game bridge');
+for (const file of ['systems/equipment.js?v=1','systems/keybinds.js?v=1','systems/dialogue.js?v=1','systems/shop.js?v=1','systems/cultivation.js?v=1','systems/storage.js?v=1','systems/sanctuary.js?v=1','systems/skills.js?v=1']) assert(html.includes(`src="${file}"`), `missing gameplay system ${file}`);
 assert(html.includes("apiBase: 'https://verdant-star-multiplayer.zxuchen.workers.dev'"), 'production multiplayer endpoint must be configured');
 assert(!html.includes('SESSION_SIGNING_KEY'), 'multiplayer signing secret must never be shipped to the browser');
 assert(/data-action="parry"[^>]*>Parry</.test(html), 'touch controls must include Parry');
 assert(/data-action="map"[^>]*>Map</.test(html), 'touch controls must include Map');
+assert(/data-action="skill"[^>]*>Art</.test(html), 'touch controls must include learned arts');
 assert(!original.includes('ctx.clearRect'), 'landmark art must not punch transparent holes through the world canvas');
 const needle = '  configureNameSetup(); updateUI(); requestAnimationFrame(frame);\n})();';
 assert(original.includes(needle), 'test hook insertion point changed');
@@ -26,11 +27,14 @@ const source = original.replace(needle, `  configureNameSetup(); updateUI();
     ctx, player, treasures, enemies, map, areas, landmarks, resourceNodes, taps, travelTargets, dash, dashCooldownDuration, cultivationAdvancements, qiCapacity, reconcileQuestProgress,
     passableAt, runDevAction, safeTeleport, save, bossDefs, bossStates, tutorial, itemDefs, merchant, derivedCombatStats,
     currentBreakthroughRequirement, missingRequirements, breakthrough, enemyProfile,
-    startEnemyAttack, resolveEnemyAttack, updateEnemyCombat, parry, attack, useTalisman, cultivate, killEnemy, loseCultivationStage, handlePlayerDeath, handleActions, draw, updateUI, cleanPlayerName, configureNameSetup, dropSelectedItem, collectGroundGear,
+    startEnemyAttack, resolveEnemyAttack, updateEnemyCombat, parry, attack, useTalisman, useLearnedArt, cultivate, killEnemy, loseCultivationStage, handlePlayerDeath, handleActions, draw, updateUI, cleanPlayerName, configureNameSetup, dropSelectedItem, collectGroundGear,
+    interact, enterSanctuary, leaveSanctuary, interactSanctuary, sanctuary, sanctuaryPassableAt, nearestSanctuaryInteraction,
     get quest() { return quest; }, set quest(value) { quest = value; },
     get mapOpen() { return mapOpen; },
     get playerName() { return playerName; }, set playerName(value) { playerName = value; },
     get equipment() { return equipment; }, get keybinds() { return keybinds; }, equipmentApi, keybindApi,
+    get personalStorage() { return personalStorage; }, get skillSystem() { return skillSystem; }, storageApi, sanctuaryApi, skillsApi,
+    get currentScene() { return currentScene; }, set currentScene(value) { currentScene = value; },
     get pickups() { return pickups; }, set selectedItemUid(value) { selectedItemUid = value; },
     get suppressSave() { return suppressSave; }
   };
@@ -39,7 +43,7 @@ const source = original.replace(needle, `  configureNameSetup(); updateUI();
 
 class FakeElement {
   constructor(id) {
-    this.id = id; this.hidden = ['settingsMenu', 'inventoryMenu', 'dialogueMenu', 'devMenu', 'clearConfirm', 'settingsProgress', 'shopPanel'].includes(id);
+    this.id = id; this.hidden = ['settingsMenu', 'inventoryMenu', 'dialogueMenu', 'storageMenu', 'devMenu', 'clearConfirm', 'settingsProgress', 'shopPanel'].includes(id);
     this.style = {}; this.dataset = {}; this.listeners = {}; this.textContent = ''; this.innerHTML = ''; this.value = '';
     const classes = new Set(); this.captured = new Set();
     this.classList = { toggle(name, force) { if (force === false) classes.delete(name); else if (force === true || !classes.has(name)) classes.add(name); else classes.delete(name); }, add: name => classes.add(name), remove: name => classes.delete(name), contains: name => classes.has(name) };
@@ -83,7 +87,7 @@ class FakeElement {
   assert.strictEqual(t.derivedCombatStats().weaponStyle, 'spear', 'equipped weapon must drive combat style');
   t.keybinds.setBinding('attack', 'x', 0); t.save();
   const saved = JSON.parse(storage.get('verdant-star-save'));
-  assert.strictEqual(saved.version, 8); assert(saved.equipment && saved.keybinds.attack.includes('x'), 'equipment and remapped controls must persist in v8');
+  assert.strictEqual(saved.version, 9); assert(saved.equipment && saved.keybinds.attack.includes('x'), 'equipment and remapped controls must persist in v9');
 }
 
 {
@@ -94,6 +98,35 @@ class FakeElement {
   const ground = t.pickups.find(pickup => pickup.type === 'gear' && pickup.itemId === weapon.itemId);
   assert(ground, 'offline drops must appear in the world');
   assert.equal(t.collectGroundGear(ground), true, 'a dropped item must be collectible again');
+}
+
+{
+  const { t, storage } = boot();
+  t.enterSanctuary();
+  assert.equal(t.currentScene, 'sanctuary');
+  assert.equal(t.sanctuary.width, 48); assert.equal(t.sanctuary.npcs.length, 8, 'sanctuary should contain the full placeholder roster');
+  assert(t.sanctuary.decorations.some(item => item.type === 'fireplace'));
+  assert(t.sanctuary.decorations.some(item => item.interaction === 'storage' && item.storage === 'infinite'));
+  assert(t.sanctuaryPassableAt(t.player.x, t.player.y, t.player.r), 'interior spawn must be safe');
+  t.player.hp = 1; t.player.qi = 0; t.player.x = 34.5 * 32; t.player.y = 24.5 * 32; t.interactSanctuary();
+  assert.equal(t.player.hp, 108); assert.equal(t.player.qi, t.player.maxQi, 'healing well should restore body and qi');
+  const sword = t.equipmentApi.getEquipped(t.equipment, 'weapon');
+  assert(t.storageApi.deposit(t.personalStorage, t.equipment, sword.uid, { allowEquipped: true }).ok);
+  t.player.stones = 10; assert(t.skillSystem.learn('ember_palm').ok, 'starter tutor art should be learnable');
+  t.save();
+  const saved = JSON.parse(storage.get('verdant-star-save'));
+  assert.equal(saved.version, 9); assert.equal(saved.location, 'sanctuary');
+  assert.equal(saved.personalStorage.items.length, 1); assert(saved.skills.learned.includes('ember_palm'));
+  const reloaded = boot(saved);
+  assert.equal(reloaded.t.currentScene, 'sanctuary', 'interior location should survive reload');
+  assert.equal(reloaded.t.personalStorage.items.length, 1, 'personal chest should survive reload');
+  assert(reloaded.t.skillSystem.hasLearned('ember_palm'), 'learned arts should survive reload');
+  reloaded.t.leaveSanctuary(); assert.equal(reloaded.t.currentScene, 'world');
+  reloaded.t.enterSanctuary();
+  assert(reloaded.t.safeTeleport(47, 39), 'world travel should remain available from the interior');
+  assert.equal(reloaded.t.currentScene, 'world', 'world travel must leave the sanctuary scene');
+  reloaded.t.player.x = 58.5 * 24; reloaded.t.player.y = 35.5 * 24; reloaded.t.interact();
+  assert.equal(reloaded.t.currentScene, 'sanctuary', 'the exterior doorway should enter the sanctuary through normal interaction');
 }
 
 function boot(saved) {
@@ -118,7 +151,8 @@ function boot(saved) {
     requestAnimationFrame() {},
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     location: { reload: () => { reloads++; } },
-    EquipmentSystem: require('../systems/equipment.js'), VerdantKeybinds: require('../systems/keybinds.js'), VerdantDialogue: require('../systems/dialogue.js'), VerdantShop: require('../systems/shop.js'), VerdantCultivation: require('../systems/cultivation.js')
+    EquipmentSystem: require('../systems/equipment.js'), VerdantKeybinds: require('../systems/keybinds.js'), VerdantDialogue: require('../systems/dialogue.js'), VerdantShop: require('../systems/shop.js'), VerdantCultivation: require('../systems/cultivation.js'),
+    StorageSystem: require('../systems/storage.js'), VerdantSanctuary: require('../systems/sanctuary.js'), VerdantSkills: require('../systems/skills.js')
   };
   sandbox.globalThis = sandbox;
   vm.runInNewContext(source, sandbox, { filename: sourcePath });
@@ -207,7 +241,7 @@ function boot(saved) {
   assert(migrated.t.player.keyItems.has('sectbreaker_core'), 'legacy boss victory must grant its breakthrough key');
   assert(migrated.t.tutorial.attacked && migrated.t.tutorial.cultivated, 'legacy progress should complete the tutorial');
   assert.strictEqual(migrated.elements.get('quest').hidden, true, 'completed tutorial should hide guided objectives');
-  assert.strictEqual(JSON.parse(migrated.storage.get('verdant-star-save')).version, 8, 'legacy save should migrate to v8');
+  assert.strictEqual(JSON.parse(migrated.storage.get('verdant-star-save')).version, 9, 'legacy save should migrate to v9');
   assert.strictEqual(migrated.t.treasures.slice(0, 5).filter(cache => cache.opened).length, 5, 'old cache indices must remain intact');
 
   const allBosses = Object.fromEntries(migrated.t.bossDefs.map(boss => [boss.id, true]));

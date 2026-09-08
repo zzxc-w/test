@@ -291,6 +291,13 @@
     .item-detail { min-height: 82px; margin-top: 10px; padding: 9px; border: 1px solid #394a45; background: #09110f; color: #adb7b2; white-space: pre-line; }
     .item-actions { margin-top: 8px; }
     #dropItem { border-color: #9e5b5688; color: #f2aaa3; }
+    .storage-card { width: min(860px, 96vw); }
+    .storage-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .storage-list { min-height: 260px; max-height: 48vh; overflow-y: auto; display: grid; align-content: start; gap: 6px; padding: 8px; border: 1px solid #334840; background: #080e0d; }
+    .storage-item { min-height: 48px !important; text-align: left; }
+    .storage-item.selected { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
+    .storage-item strong, .storage-item small { display: block; }
+    .storage-item small { color: #93a59e; margin-top: 2px; }
     .dialogue-card { width: min(600px, 94vw); }
     .dialogue-speaker { color: var(--gold); letter-spacing: .08em; text-transform: uppercase; }
     .dialogue-text { min-height: 62px; color: #e5dfce !important; line-height: 1.6; }
@@ -310,6 +317,7 @@
       .dev-grid { grid-template-columns: 1fr; }
       .dev-group.wide { grid-column: auto; }
       .inventory-layout { grid-template-columns: 1fr; }
+      .storage-layout { grid-template-columns: 1fr; }
       .bag-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
       .bag-slot { min-height: 52px !important; padding: 4px !important; font-size: .64rem; }
       .shop-grid { grid-template-columns: 1fr; }
@@ -348,13 +356,13 @@
     <div id="compass" class="panel"><span id="compassArrow">&#9650;</span><span id="compassText">Spirit vein nearby</span></div>
     <div id="messages" aria-live="polite"></div>
     <div id="interactPrompt" class="panel" aria-live="polite"></div>
-    <div class="panel bottom-help"><kbd>WASD</kbd> Move &nbsp; <kbd>Space</kbd> Strike &nbsp; <kbd>F</kbd> Parry &nbsp; <kbd>Shift</kbd> Dash &nbsp; <kbd>E</kbd> Interact &nbsp; <kbd>I</kbd> Inventory &nbsp; <kbd>M</kbd> Map</div>
+    <div class="panel bottom-help"><kbd>WASD</kbd> Move &nbsp; <kbd>Space</kbd> Strike &nbsp; <kbd>F</kbd> Parry &nbsp; <kbd>R</kbd> Art &nbsp; <kbd>Shift</kbd> Dash &nbsp; <kbd>E</kbd> Interact &nbsp; <kbd>I</kbd> Inventory &nbsp; <kbd>M</kbd> Map</div>
     <div id="touch" aria-label="Touch controls">
       <div class="pad">
         <button class="touch-btn" data-action="moveUp" aria-label="Move up">&#9650;</button><button class="touch-btn" data-action="moveLeft" aria-label="Move left">&#9664;</button><button class="touch-btn" data-action="moveDown" aria-label="Move down">&#9660;</button><button class="touch-btn" data-action="moveRight" aria-label="Move right">&#9654;</button>
       </div>
       <div class="actions">
-        <button class="touch-btn" data-action="cultivate">Cultivate</button><button class="touch-btn" data-action="interact">Interact</button><button class="touch-btn" data-action="dash">Dash</button><button class="touch-btn" data-action="parry">Parry</button><button class="touch-btn" data-action="talisman">Seal</button><button class="touch-btn" data-action="map">Map</button><button class="touch-btn" data-action="attack">Strike</button><button class="touch-btn" data-action="inventory">Bag</button>
+        <button class="touch-btn" data-action="cultivate">Cultivate</button><button class="touch-btn" data-action="interact">Interact</button><button class="touch-btn" data-action="dash">Dash</button><button class="touch-btn" data-action="parry">Parry</button><button class="touch-btn" data-action="talisman">Seal</button><button class="touch-btn" data-action="skill">Art</button><button class="touch-btn" data-action="map">Map</button><button class="touch-btn" data-action="attack">Strike</button><button class="touch-btn" data-action="inventory">Bag</button>
       </div>
     </div>
     <section id="settingsMenu" class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
@@ -398,6 +406,18 @@
         <section id="shopPanel" hidden><div id="shopBalance" class="dev-status"></div><div id="shopGrid" class="shop-grid"></div></section>
       </div>
     </section>
+    <section id="storageMenu" class="modal" role="dialog" aria-modal="true" aria-labelledby="storageTitle" hidden>
+      <div class="menu-card storage-card">
+        <div class="menu-head"><h2 id="storageTitle">Personal Spirit Chest</h2><button id="closeStorage" type="button">Close</button></div>
+        <p>Private storage bound to this save. Capacity is unlimited.</p>
+        <div class="storage-layout">
+          <section><h3>Backpack</h3><div id="storageBagList" class="storage-list"></div></section>
+          <section><h3>Spirit Chest <span id="storageCount"></span></h3><div id="storageChestList" class="storage-list"></div></section>
+        </div>
+        <div id="storageDetail" class="item-detail">Select an item to move it.</div>
+        <div class="menu-actions"><button id="depositItem" type="button" disabled>Store item</button><button id="withdrawItem" type="button" disabled>Take item</button></div>
+      </div>
+    </section>
     <section id="devMenu" class="modal" role="dialog" aria-modal="true" aria-labelledby="devTitle" hidden>
       <div class="menu-card">
         <div class="menu-head"><h2 id="devTitle">Cultivator Test Chamber</h2><button id="closeDev" type="button">Close</button></div>
@@ -414,6 +434,9 @@
             <button data-dev-action="grant-materials">Grant all materials</button><button data-dev-action="clear-materials">Clear materials</button>
             <button data-dev-action="grant-spear-set">Grant spear set</button><button data-dev-action="grant-dual-set">Grant dual-blade set</button>
             <button data-dev-action="grant-greatsword-set">Grant greatsword set</button><button data-dev-action="grant-sword-set">Grant sword set</button>
+            <button data-dev-action="learn-all-skills">Learn all arts</button><button data-dev-action="enter-sanctuary">Enter sanctuary</button>
+            <button data-dev-action="sanctuary-corner">Sanctuary chest</button><button data-dev-action="sanctuary-well">Sanctuary well</button>
+            <button data-dev-action="sanctuary-tutors">Sanctuary tutors</button>
             <button data-dev-action="open-caches">Open all caches</button>
             <button data-dev-action="reset-caches">Reset caches</button><button data-dev-action="defeat-boss">Defeat boss</button>
             <button data-dev-action="respawn-boss">Respawn boss</button><button data-dev-action="trigger-attack">Trigger nearby attack</button>
@@ -462,6 +485,9 @@
   <script src="systems/dialogue.js?v=1"></script>
   <script src="systems/shop.js?v=1"></script>
   <script src="systems/cultivation.js?v=1"></script>
-  <script src="game.js?v=12"></script>
+  <script src="systems/storage.js?v=1"></script>
+  <script src="systems/sanctuary.js?v=1"></script>
+  <script src="systems/skills.js?v=1"></script>
+  <script src="game.js?v=13"></script>
 </body>
 </html>

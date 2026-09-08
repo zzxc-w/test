@@ -9,7 +9,7 @@
   const WORLD_W = 144, WORLD_H = 108;
   const TAU = Math.PI * 2;
   const SAVE_KEY = 'verdant-star-save';
-  const SAVE_VERSION = 8;
+  const SAVE_VERSION = 9;
   const DASH_DISTANCE = 84;
   const DASH_BASE_COOLDOWN = .72;
   const DASH_MIN_COOLDOWN = .36;
@@ -23,10 +23,11 @@
     return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
   };
 
-  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','caches','zone','time','quest','questText','messages','overlay','start','compass','compassArrow','compassText','interactPrompt','settingsButton','multiplayerButton','settingsMenu','closeSettings','settingsControls','settingsProgress','keybindList','resetKeybinds','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText','inventoryMenu','closeInventory','equipmentSlots','equipmentStats','bagGrid','bagCount','itemDetail','equipItem','unequipItem','dropItem','dialogueMenu','closeDialogue','dialogueSpeaker','dialogueText','dialogueChoices','shopPanel','shopBalance','shopGrid','playerNameLabel','nameSetup','playerNameInput','nameError','returningName'].map(id => [id, document.getElementById(id)]));
+  const ui = Object.fromEntries(['realm','hpFill','hpText','qiFill','qiText','xpFill','stones','herbs','kills','caches','zone','time','quest','questText','messages','overlay','start','compass','compassArrow','compassText','interactPrompt','settingsButton','multiplayerButton','settingsMenu','closeSettings','settingsControls','settingsProgress','keybindList','resetKeybinds','clearProgress','clearConfirm','confirmClear','cancelClear','devMenu','closeDev','devStatus','inventoryText','inventoryMenu','closeInventory','equipmentSlots','equipmentStats','bagGrid','bagCount','itemDetail','equipItem','unequipItem','dropItem','dialogueMenu','closeDialogue','dialogueSpeaker','dialogueText','dialogueChoices','shopPanel','shopBalance','shopGrid','storageMenu','closeStorage','storageBagList','storageChestList','storageCount','storageDetail','depositItem','withdrawItem','playerNameLabel','nameSetup','playerNameInput','nameError','returningName'].map(id => [id, document.getElementById(id)]));
   const keys = new Set(), taps = new Set(), keyboardKeys = new Set(), touchPointers = new Map(), touchKeyCounts = new Map();
   let started = false, paused = false, last = performance.now(), playTime = 0, shake = 0, flash = 0, runtimeErrorShown = false, mapOpen = false;
   let activeMenu = null, menuWasPaused = false, suppressSave = false, loadedSaveVersion = 0, playerName = '', remappingAction = null, selectedItemUid = null, dialogueSession = null;
+  let currentScene = 'world', worldReturnPosition = { x: 58.5 * TILE, y: 36.5 * TILE }, activeNpc = null, selectedStorageSide = null, selectedStorageUid = null;
   const pendingSharedDrops = new Map(), pendingDropClaims = new Map(), claimingDropIds = new Set();
   const dev = { invulnerable: false, noCooldowns: false };
   const multiplayerApi = globalThis.VerdantMultiplayer || null;
@@ -35,8 +36,16 @@
   const dialogueApi = globalThis.VerdantDialogue;
   const shopApi = globalThis.VerdantShop;
   const cultivationApi = globalThis.VerdantCultivation;
+  const storageApi = globalThis.StorageSystem;
+  const sanctuaryApi = globalThis.VerdantSanctuary;
+  const skillsApi = globalThis.VerdantSkills;
+  const sanctuary = sanctuaryApi.createSanctuary();
+  const SANCT_TILE = sanctuary.tileSize;
+  const sanctuaryExterior = { x: 52, y: 25, width: 13, height: 10, doorX: 58, doorY: 35 };
   let equipment = equipmentApi.createInventory();
   let keybinds = keybindApi.createKeybinds();
+  let personalStorage = storageApi.createStorage(), skillSystem = null, pendingSkillState = null;
+  const storyFlags = new Set();
   let multiplayer = null, multiplayerPanel = null, arenaOverlay = null, multiplayerPanelOpen = false;
 
   const colors = {
@@ -109,6 +118,13 @@
   }
   // Area carving happens after landmark clearings, so restore the functional landmark tiles.
   for (const l of landmarks) map[l.y][l.x] = l.type;
+  // The sanctuary occupies a real footprint beside the Crossroads. Its south
+  // doorway opens directly onto the old pilgrim road.
+  for (let y = sanctuaryExterior.y; y < sanctuaryExterior.y + sanctuaryExterior.height; y++) {
+    for (let x = sanctuaryExterior.x; x < sanctuaryExterior.x + sanctuaryExterior.width; x++) map[y][x] = 'stone';
+  }
+  map[sanctuaryExterior.doorY - 1][sanctuaryExterior.doorX] = 'path';
+  map[sanctuaryExterior.doorY][sanctuaryExterior.doorX] = 'path';
 
   const realms = [
     { name: 'Mortal', stages: 3, qi: 80 }, { name: 'Qi Condensation', stages: 5, qi: 150 },
@@ -118,7 +134,7 @@
   const player = {
     x: 47.5 * TILE, y: 39 * TILE, r: 8, facing: 0, speed: 142, hp: 100, maxHp: 100,
     qi: 0, maxQi: 80, xp: 0, xpNeed: 60, realm: 0, stage: 1, stones: 0, herbs: 0, kills: 0,
-    attack: 16, attackCd: 0, attackTimer: 0, dashCd: 0, invuln: 0, talismanCd: 0,
+    attack: 16, attackCd: 0, attackTimer: 0, dashCd: 0, invuln: 0, talismanCd: 0, skillCd: 0,
     parryTimer: 0, parryCd: 0, parryRecovery: 0,
     meditating: false, discoveries: new Set(['Crossroads Shrine']), discoveredAreas: new Set(), discoveredLandmarks: new Set(['crossroads']),
     ingredients: { cloud_dew: 0, lotus_seed: 0, root_resin: 0, cinder_marrow: 0 },
@@ -197,6 +213,15 @@
       const x = Math.floor((px + ox) / TILE), y = Math.floor((py + oy) / TILE);
       return x >= 0 && y >= 0 && x < WORLD_W && y < WORLD_H && !['water','stone'].includes(map[y][x]);
     });
+  }
+
+  function sanctuaryPassableAt(px, py, radius = 7) {
+    const points = [[-radius,-radius],[radius,-radius],[-radius,radius],[radius,radius]];
+    return points.every(([ox, oy]) => sanctuaryApi.isPassable(sanctuary, (px + ox) / SANCT_TILE, (py + oy) / SANCT_TILE));
+  }
+
+  function playerPassableAt(px, py, radius = player.r) {
+    return currentScene === 'sanctuary' ? sanctuaryPassableAt(px, py, radius) : passableAt(px, py, radius);
   }
 
   function randomOpen(seed, margin = 5) {
@@ -281,11 +306,11 @@
   }
 
   function nearbyCultivators() {
-    return multiplayer ? multiplayer.presence.nearby(player.x, player.y, 360, Date.now()) : [];
+    return multiplayer && currentScene === 'world' ? multiplayer.presence.nearby(player.x, player.y, 360, Date.now()) : [];
   }
 
   function sendWorldPresence(action = 'none', force = false) {
-    if (!multiplayer || multiplayer.arena.active) return false;
+    if (!multiplayer || multiplayer.arena.active || currentScene !== 'world') return false;
     const moving = actionHeld('moveUp') || actionHeld('moveDown') || actionHeld('moveLeft') || actionHeld('moveRight');
     return multiplayer.updatePresence({ x: player.x, y: player.y, facing: player.facing.toFixed(3), moving, action }, force);
   }
@@ -402,7 +427,28 @@
     return Math.max(DASH_MIN_COOLDOWN, DASH_BASE_COOLDOWN - reductions * DASH_COOLDOWN_STEP) * derivedCombatStats().dashCooldownMultiplier;
   }
 
-  function derivedCombatStats() { return equipmentApi.deriveStats(equipment); }
+  function configureSkillSystem(savedState) {
+    skillSystem = skillsApi.createSkillSystem({
+      state: savedState,
+      resources: {
+        get: id => id === 'spiritStones' ? player.stones : 0,
+        spend: (id, amount) => { if (id !== 'spiritStones' || player.stones < amount) return false; player.stones -= amount; return true; },
+        credit: (id, amount) => { if (id === 'spiritStones') player.stones += amount; }
+      },
+      inventory: { count: () => 0, remove: () => false, add: () => false },
+      progression: { getStage: () => cultivationAdvancements() + 1, hasFlag: id => storyFlags.has(id) }
+    });
+  }
+
+  function derivedCombatStats() {
+    const stats = equipmentApi.deriveStats(equipment);
+    for (const effect of skillSystem?.passiveEffects() || []) {
+      for (const key of ['damageMultiplier','attackCooldownMultiplier','dashCooldownMultiplier','moveSpeedMultiplier','parryWindowMultiplier','qiGainMultiplier']) if (Number.isFinite(effect[key])) stats[key] *= effect[key];
+      for (const key of ['reachBonus','maxHpBonus','defense','lootChanceBonus','attackArcBonus']) if (Number.isFinite(effect[key])) stats[key] += effect[key];
+    }
+    stats.defense = clamp(stats.defense, 0, .65); stats.dashCooldownMultiplier = Math.max(.45, stats.dashCooldownMultiplier);
+    return stats;
+  }
   function effectiveMaxHp() { return player.maxHp + derivedCombatStats().maxHpBonus; }
   function actionHeld(action) {
     if (keys.has(`@${action}`)) return true;
@@ -439,7 +485,13 @@
     player.herbs = clamp(Math.floor(player.herbs) || 0, 0, 100000000);
     player.kills = clamp(Math.floor(player.kills) || 0, 0, 100000000);
     quest = clamp(Math.floor(quest) || 0, 0, 6);
-    if (!passableAt(player.x, player.y, player.r)) { player.x = 47.5 * TILE; player.y = 39 * TILE; }
+    if (currentScene === 'sanctuary') {
+      const safe = sanctuaryApi.sanitizeLocation(sanctuary, { x: player.x / SANCT_TILE, y: player.y / SANCT_TILE });
+      player.x = safe.x * SANCT_TILE; player.y = safe.y * SANCT_TILE;
+    } else if (!passableAt(player.x, player.y, player.r)) { player.x = 47.5 * TILE; player.y = 39 * TILE; }
+    worldReturnPosition.x = clamp(worldReturnPosition.x, player.r, WORLD_W * TILE - player.r);
+    worldReturnPosition.y = clamp(worldReturnPosition.y, player.r, WORLD_H * TILE - player.r);
+    if (!passableAt(worldReturnPosition.x, worldReturnPosition.y, player.r)) worldReturnPosition = { x: 58.5 * TILE, y: 36.5 * TILE };
   }
 
   function save() {
@@ -454,6 +506,8 @@
         discoveries: [...player.discoveries], discoveredAreas: [...player.discoveredAreas], discoveredLandmarks: [...player.discoveredLandmarks], treasures: treasures.map(t => t.opened),
         ingredients: { ...player.ingredients }, keyItems: [...player.keyItems], tutorial: { ...tutorial }, bosses: { ...bossStates },
         equipment: equipmentApi.serialize(equipment), keybinds: keybinds.snapshot(),
+        personalStorage: storageApi.serialize(personalStorage), skills: skillSystem?.serialize() || { version: 1, learned: [] },
+        storyFlags: [...storyFlags], location: currentScene, worldReturnPosition: { ...worldReturnPosition },
         resourceReadyAt: Object.fromEntries(resourceNodes.filter(n => !n.ready).map(n => [n.id, Date.now() + Math.max(0, n.respawn) * 1000])),
         bossDefeated: bossStates.sectbreaker
       }));
@@ -494,6 +548,12 @@
       if (d.bossDefeated) bossStates.sectbreaker = true;
       equipment = equipmentApi.deserialize(d.equipment);
       keybinds = keybindApi.createKeybinds(d.keybinds);
+      personalStorage = storageApi.deserialize(d.personalStorage);
+      pendingSkillState = skillsApi.deserialize(d.skills);
+      if (Array.isArray(d.storyFlags)) d.storyFlags.filter(flag => typeof flag === 'string' && /^[a-z0-9_]{1,48}$/.test(flag)).forEach(flag => storyFlags.add(flag));
+      configureSkillSystem(pendingSkillState);
+      currentScene = d.location === 'sanctuary' ? 'sanctuary' : 'world';
+      if (d.worldReturnPosition && Number.isFinite(d.worldReturnPosition.x) && Number.isFinite(d.worldReturnPosition.y)) worldReturnPosition = { x: d.worldReturnPosition.x, y: d.worldReturnPosition.y };
       // Defeat flags are authoritative. Repair missing durable keys in legacy or
       // partially-written saves so a completed boss can never softlock progress.
       for (const boss of bossDefs) if (bossStates[boss.id]) player.keyItems.add(boss.keyItem);
@@ -507,6 +567,10 @@
 
   function tileUnder(o = player) { return map[clamp(Math.floor(o.y / TILE), 0, WORLD_H - 1)][clamp(Math.floor(o.x / TILE), 0, WORLD_W - 1)]; }
   function zoneName() {
+    if (currentScene === 'sanctuary') {
+      const tx = player.x / SANCT_TILE, ty = player.y / SANCT_TILE;
+      return sanctuary.zones.find(zone => tx >= zone.x && ty >= zone.y && tx < zone.x + zone.width && ty < zone.y + zone.height)?.name || sanctuary.name;
+    }
     const tx = player.x / TILE, ty = player.y / TILE;
     const found = areas.find(a => Math.hypot(tx - a.x, ty - a.y) < a.r + 1);
     if (found) return found.name;
@@ -521,8 +585,9 @@
   }
 
   function moveEntity(o, dx, dy, radius) {
-    if (passableAt(o.x + dx, o.y, radius)) o.x += dx;
-    if (passableAt(o.x, o.y + dy, radius)) o.y += dy;
+    const pass = o === player ? playerPassableAt : passableAt;
+    if (pass(o.x + dx, o.y, radius)) o.x += dx;
+    if (pass(o.x, o.y + dy, radius)) o.y += dy;
   }
 
   const breakthroughRequirements = {
@@ -690,6 +755,26 @@
     }
   }
 
+  function useLearnedArt() {
+    if (!skillSystem?.hasLearned('ember_palm')) { addMessage('A tutor must first teach you an active cultivation art.', 'bad'); return; }
+    if (currentScene !== 'world' || player.skillCd > 0 || player.parryTimer > 0 || player.attackTimer > 0) return;
+    if (player.qi < 15) { addMessage('Ember Palm requires 15 qi.', 'bad'); return; }
+    const art = skillsApi.CATALOG.ember_palm; player.qi -= 15; player.skillCd = art.effect.cooldown; shake = 7;
+    const cx = player.x + Math.cos(player.facing) * 42, cy = player.y + Math.sin(player.facing) * 42;
+    for (const e of enemies) {
+      if (!e.alive || Math.hypot(e.x - cx, e.y - cy) > 72) continue;
+      const angle = Math.atan2(e.y - player.y, e.x - player.x), delta = Math.atan2(Math.sin(angle - player.facing), Math.cos(angle - player.facing));
+      if (Math.abs(delta) > .85) continue;
+      e.hp -= (player.attack + 10) * art.effect.damageMultiplier * derivedCombatStats().damageMultiplier; e.hit = .3;
+      burst(e.x, e.y, '#ff934f', 16, 105); if (e.hp <= 0) killEnemy(e);
+    }
+    for (let i = -4; i <= 4; i++) {
+      const angle = player.facing + i * .13;
+      particles.push({ x: player.x + Math.cos(angle) * 18, y: player.y + Math.sin(angle) * 18, vx: Math.cos(angle) * (150 + Math.abs(i) * 6), vy: Math.sin(angle) * (150 + Math.abs(i) * 6), life: .5, max: .5, color: i % 2 ? '#ff7a3d' : '#ffd06d', size: 5 });
+    }
+    addMessage('Ember Palm!', 'good');
+  }
+
   function killEnemy(e) {
     e.alive = false; e.respawn = e.boss ? 999999 : 18 + hash(player.kills, 9) * 18; player.kills++;
     const t = enemyTypes[e.type]; gainXp(t.xp);
@@ -740,12 +825,87 @@
     addMessage('No ripe spirit herb is within reach.');
   }
 
+  function enterSanctuary() {
+    worldReturnPosition = { x: player.x, y: player.y };
+    sendWorldPresence('none', true);
+    currentScene = 'sanctuary'; mapOpen = false;
+    player.x = sanctuary.spawn.x * SANCT_TILE; player.y = sanctuary.spawn.y * SANCT_TILE; player.facing = -Math.PI / 2;
+    releaseAllInputs(); addMessage(`Entered ${sanctuary.name}.`, 'good'); save(); updateUI();
+  }
+
+  function leaveSanctuary() {
+    currentScene = 'world'; player.x = worldReturnPosition.x; player.y = worldReturnPosition.y + TILE; player.facing = Math.PI / 2;
+    releaseAllInputs(); addMessage('Returned to the Crossroads.', 'good'); save(); updateUI();
+  }
+
+  function nearestSanctuaryInteraction() {
+    return sanctuaryApi.nearestInteractable(sanctuary, player.x / SANCT_TILE, player.y / SANCT_TILE, 2.15);
+  }
+
+  function openSanctuaryNpc(npc) {
+    if (npc.service === 'quartermaster') { openMerchant(); return; }
+    activeNpc = npc;
+    if (npc.service === 'sword-tutor') storyFlags.add('met_suye');
+    openMenu('dialogue'); renderNpcDialogue(); save();
+  }
+
+  function skillRequirementLabel(check) {
+    if (check.type === 'stage') return `cultivation step ${check.atLeast}`;
+    if (check.type === 'skill') return skillsApi.CATALOG[check.id]?.name || check.id;
+    if (check.type === 'resource') return `${check.amount} spirit stones`;
+    if (check.type === 'item') return `${check.amount} iron ore (not yet obtainable)`;
+    return check.id || 'story progress';
+  }
+
+  function renderNpcDialogue() {
+    if (!activeNpc) return;
+    ui.dialogueSpeaker.textContent = `${activeNpc.name} · ${activeNpc.role}`;
+    ui.dialogueText.textContent = activeNpc.dialogue;
+    ui.dialogueChoices.replaceChildren(); ui.shopPanel.hidden = true;
+    const tutorByService = { 'movement-tutor': 'tutor_meilin', 'sword-tutor': 'tutor_suye', blacksmith: 'tutor_bao' };
+    const tutorId = tutorByService[activeNpc.service];
+    if (tutorId) for (const offer of skillSystem.listByTutor(tutorId)) {
+      const button = document.createElement('button'), missing = offer.status.missing.map(skillRequirementLabel);
+      button.type = 'button'; button.disabled = !offer.status.ok;
+      button.textContent = skillSystem.hasLearned(offer.skill.id) ? `${offer.skill.name} · learned` : `${offer.skill.name} · ${offer.status.ok ? offer.skill.costs.map(skillRequirementLabel).join(', ') : `requires ${missing.join(', ')}`}`;
+      button.addEventListener('click', () => {
+        const result = skillSystem.learn(offer.skill.id);
+        if (result.ok) { addMessage(`Learned ${offer.skill.name}.`, 'good'); player.hp = Math.min(player.hp, effectiveMaxHp()); save(); updateUI(); }
+        else addMessage('That teaching remains beyond your current reach.', 'bad');
+        renderNpcDialogue();
+      });
+      ui.dialogueChoices.append(button);
+    }
+    if (activeNpc.service === 'healer-caretaker') {
+      const heal = document.createElement('button'); heal.type = 'button'; heal.textContent = 'Ask about the Moonwater Well';
+      heal.addEventListener('click', () => { addMessage('Yao gestures toward the well in your private corner. Its water restores body and qi.'); closeMenu(); }); ui.dialogueChoices.append(heal);
+    }
+    const leave = document.createElement('button'); leave.type = 'button'; leave.textContent = 'Leave'; leave.addEventListener('click', closeMenu); ui.dialogueChoices.append(leave);
+  }
+
+  function interactSanctuary() {
+    const target = nearestSanctuaryInteraction();
+    if (!target) { addMessage('Nothing here answers your touch.'); return; }
+    if (target.kind === 'npc') { openSanctuaryNpc(target); return; }
+    if (target.interaction === 'exit') { leaveSanctuary(); return; }
+    if (target.interaction === 'storage') { selectedStorageSide = selectedStorageUid = null; openMenu('storage'); return; }
+    if (target.interaction === 'heal') {
+      player.hp = effectiveMaxHp(); player.qi = player.maxQi; burst(player.x, player.y, '#82e6d5', 22, 65); addMessage('Moonwater restores your body and fills your meridians.', 'good'); save(); return;
+    }
+    if (target.interaction === 'rest') { player.hp = effectiveMaxHp(); setWorldMinute(390); addMessage('You rest until dawn in your private corner.', 'good'); save(); return; }
+    if (target.interaction === 'meditate') { player.qi = Math.min(player.maxQi, player.qi + 30); addMessage('The quiet seat settles 30 qi into your core.', 'good'); save(); return; }
+    if (target.interaction === 'training') { addMessage('The practice dummy bears old scars. Tutors will expand its lessons later.'); return; }
+    addMessage('This station is prepared for a future craft and storyline.');
+  }
+
   function interact() {
+    if (currentScene === 'sanctuary') { interactSanctuary(); return; }
+    const door = { x: (sanctuaryExterior.doorX + .5) * TILE, y: (sanctuaryExterior.doorY + .5) * TILE };
+    if (dist(player, door) < 52) { enterSanctuary(); return; }
     const localGear = pickups.filter(p => p.type === 'gear' && dist(player, p) < 52).sort((a, b) => dist(player, a) - dist(player, b))[0];
     if (localGear) { collectGroundGear(localGear); return; }
     const shared = multiplayer?.status === 'online' ? multiplayer.drops.nearby(player.x, player.y, 52, Date.now()).find(drop => !claimingDropIds.has(drop.id)) : null;
     if (shared) { claimSharedDrop(shared); return; }
-    if (dist(player, merchant) < 58) { openMerchant(); return; }
     gather();
   }
 
@@ -863,10 +1023,12 @@
     const n = Math.hypot(dx, dy) || 1; dx /= n; dy /= n;
     const fromX = player.x, fromY = player.y;
     // Only the landing must be clear: cloud-step can cross terrain but never end inside it.
+    const maxX = (currentScene === 'sanctuary' ? sanctuary.width * SANCT_TILE : WORLD_W * TILE) - player.r;
+    const maxY = (currentScene === 'sanctuary' ? sanctuary.height * SANCT_TILE : WORLD_H * TILE) - player.r;
     for (let distance = DASH_DISTANCE; distance >= 0; distance -= 7) {
-      const nx = clamp(fromX + dx * distance, player.r, WORLD_W * TILE - player.r);
-      const ny = clamp(fromY + dy * distance, player.r, WORLD_H * TILE - player.r);
-      if (!passableAt(nx, ny, player.r)) continue;
+      const nx = clamp(fromX + dx * distance, player.r, maxX);
+      const ny = clamp(fromY + dy * distance, player.r, maxY);
+      if (!playerPassableAt(nx, ny, player.r)) continue;
       player.x = nx; player.y = ny; break;
     }
     player.dashCd = dashCooldownDuration(); player.invuln = .48;
@@ -879,6 +1041,7 @@
     if (parryPressed) parry();
     else if (actionPressed('attack')) attack();
     else if (actionPressed('talisman')) useTalisman();
+    else if (actionPressed('skill')) useLearnedArt();
     else if (actionPressed('interact')) interact();
     else if (actionPressed('cultivate')) cultivate();
     else if (actionPressed('inventory')) openMenu('inventory');
@@ -943,9 +1106,9 @@
   function handlePlayerDeath() {
     const oldQi = player.qi, lostStage = loseCultivationStage();
     player.qi = Math.min(player.maxQi, Math.floor(oldQi * .75));
-    player.hp = effectiveMaxHp(); player.x = 47.5 * TILE; player.y = 39 * TILE;
+    currentScene = 'world'; player.hp = effectiveMaxHp(); player.x = 47.5 * TILE; player.y = 39 * TILE;
     Object.assign(player, {
-      attackCd: 0, attackTimer: 0, dashCd: 0, invuln: 2, talismanCd: 0,
+      attackCd: 0, attackTimer: 0, dashCd: 0, invuln: 2, talismanCd: 0, skillCd: 0,
       parryTimer: 0, parryCd: 0, parryRecovery: 0, meditating: false
     });
     resetLivingEnemiesAfterDeath();
@@ -977,16 +1140,35 @@
     return false;
   }
 
+  function updateSanctuaryScene(dt) {
+    let dx = (actionHeld('moveRight') ? 1 : 0) - (actionHeld('moveLeft') ? 1 : 0);
+    let dy = (actionHeld('moveDown') ? 1 : 0) - (actionHeld('moveUp') ? 1 : 0);
+    const parryPressed = actionPressed('parry'), dashPressed = !parryPressed && actionPressed('dash');
+    if (dx || dy) {
+      const n = Math.hypot(dx, dy); dx /= n; dy /= n; player.facing = Math.atan2(dy, dx);
+      if (!dashPressed) moveEntity(player, dx * player.speed * derivedCombatStats().moveSpeedMultiplier * dt, dy * player.speed * derivedCombatStats().moveSpeedMultiplier * dt, player.r);
+    }
+    if (dashPressed) dash(dx, dy);
+    handleActions();
+    for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= .94; p.vy *= .94; p.life -= dt; }
+    particles = particles.filter(p => p.life > 0); slashes.forEach(s => s.life -= dt); slashes = slashes.filter(s => s.life > 0);
+    messages.forEach(m => m.life -= dt); const before = messages.length; messages = messages.filter(m => m.life > 0); if (before !== messages.length) renderMessages();
+    shake *= .86; flash = Math.max(0, flash - dt * 1.2);
+    if (Math.floor(playTime) % 12 === 0 && Math.floor(playTime - dt) % 12 !== 0) save();
+    updateUI();
+  }
+
   function update(dt) {
     if (!started) return;
     if (multiplayer?.arena.active) { submitArenaInput(); return; }
     if (paused) return;
     playTime += dt;
     player.attackCd = Math.max(0, player.attackCd - dt); player.attackTimer = Math.max(0, player.attackTimer - dt);
-    player.dashCd = Math.max(0, player.dashCd - dt); player.invuln = Math.max(0, player.invuln - dt); player.talismanCd = Math.max(0, player.talismanCd - dt);
+    player.dashCd = Math.max(0, player.dashCd - dt); player.invuln = Math.max(0, player.invuln - dt); player.talismanCd = Math.max(0, player.talismanCd - dt); player.skillCd = Math.max(0, player.skillCd - dt);
     player.parryTimer = Math.max(0, player.parryTimer - dt); player.parryCd = Math.max(0, player.parryCd - dt); player.parryRecovery = Math.max(0, player.parryRecovery - dt);
-    if (dev.noCooldowns) player.attackCd = player.dashCd = player.talismanCd = player.parryCd = 0;
+    if (dev.noCooldowns) player.attackCd = player.dashCd = player.talismanCd = player.skillCd = player.parryCd = 0;
     player.meditating = false;
+    if (currentScene === 'sanctuary') { updateSanctuaryScene(dt); return; }
 
     let dx = (actionHeld('moveRight') ? 1 : 0) - (actionHeld('moveLeft') ? 1 : 0);
     let dy = (actionHeld('moveDown') ? 1 : 0) - (actionHeld('moveUp') ? 1 : 0);
@@ -1056,6 +1238,19 @@
     const totalMins = (playTime * .42 + 330) % 1440, hour = Math.floor(totalMins / 60), day = 1 + Math.floor((playTime * .42 + 330) / 1440);
     const period = hour < 7 ? 'Dawn' : hour < 12 ? 'Morning' : hour < 17 ? 'Afternoon' : hour < 20 ? 'Dusk' : 'Night';
     ui.time.textContent = `${period} \u00b7 Day ${day}`;
+    if (currentScene === 'sanctuary') {
+      ui.quest.hidden = true; ui.compass.hidden = true;
+      const target = nearestSanctuaryInteraction();
+      const label = target?.kind === 'npc' ? `Speak with ${target.name}`
+        : target?.interaction === 'exit' ? 'Leave the sanctuary'
+        : target?.interaction === 'storage' ? `Open ${target.label || 'personal chest'}`
+        : target?.interaction === 'heal' ? `Drink from ${target.label || 'healing well'}`
+        : target?.interaction === 'rest' ? 'Rest until dawn'
+        : target?.interaction === 'meditate' ? 'Meditate in your corner'
+        : target ? 'Inspect station' : '';
+      const prompt = label ? `${bindingLabel('interact')} \u00b7 ${label}` : '';
+      ui.interactPrompt.textContent = prompt; ui.interactPrompt.classList.toggle('show', !!prompt); return;
+    }
     const veins = landmarks.filter(l => l.type === 'vein');
     const nearest = veins.reduce((best, v) => Math.hypot(player.x / TILE - v.x, player.y / TILE - v.y) < Math.hypot(player.x / TILE - best.x, player.y / TILE - best.y) ? v : best, veins[0]);
     const veinAngle = Math.atan2(nearest.y * TILE - player.y, nearest.x * TILE - player.x);
@@ -1073,13 +1268,14 @@
     }
     const nearLocalGear = pickups.find(p => p.type === 'gear' && dist(player, p) < 52);
     const nearSharedGear = multiplayer?.status === 'online' && multiplayer.drops.nearby(player.x, player.y, 52, Date.now()).find(drop => !claimingDropIds.has(drop.id));
-    const nearMerchant = dist(player, merchant) < 58;
+    const sanctuaryDoor = { x: (sanctuaryExterior.doorX + .5) * TILE, y: (sanctuaryExterior.doorY + .5) * TILE };
+    const nearSanctuaryDoor = dist(player, sanctuaryDoor) < 52;
     const nearbyChest = treasures.find(t => !t.opened && dist(player, t) < 58);
     const nearbyNode = resourceNodes.find(n => n.ready && dist(player, n) < 42);
     const nearbyHerb = plants.find(p => p.ready && dist(player, p) < 42);
     let prompt = '';
     if (nearLocalGear || nearSharedGear) prompt = `${bindingLabel('interact')} \u00b7 Pick up ${equipmentApi.getDefinition((nearLocalGear || nearSharedGear).itemId)?.name || 'equipment'}`;
-    else if (nearMerchant) prompt = `${bindingLabel('interact')} \u00b7 Speak with ${merchant.name}`;
+    else if (nearSanctuaryDoor) prompt = `${bindingLabel('interact')} \u00b7 Enter ${sanctuary.name}`;
     else if (nearbyChest) prompt = `${bindingLabel('interact')} \u00b7 Open ancient cache`;
     else if (nearbyNode) prompt = `${bindingLabel('interact')} \u00b7 Gather ${itemDefs[nearbyNode.item].name}`;
     else if (nearbyHerb) prompt = `${bindingLabel('interact')} \u00b7 Gather glowing moonleaf`;
@@ -1143,6 +1339,53 @@
     ctx.fillStyle = '#e4c069'; ctx.fillRect(s.x - 1, s.y - 3 + bob, 3, 9);
     ctx.fillStyle = '#a77944'; ctx.fillRect(s.x + 10, s.y - 3, 8, 15); ctx.fillStyle = '#f0d27b'; ctx.fillRect(s.x + 12, s.y, 4, 4);
     if (dist(player, merchant) < 120) { ctx.fillStyle = '#fff0bd'; ctx.font = '12px Georgia'; ctx.textAlign = 'center'; ctx.fillText(merchant.name, s.x, s.y - 22); }
+  }
+
+  function drawSanctuaryExterior(cam, time) {
+    const x = sanctuaryExterior.x * TILE - cam.x, y = sanctuaryExterior.y * TILE - cam.y;
+    const w = sanctuaryExterior.width * TILE, h = sanctuaryExterior.height * TILE;
+    ctx.fillStyle = '#21191b'; ctx.fillRect(x - 10, y + 30, w + 20, h - 18);
+    ctx.fillStyle = '#70443e'; ctx.fillRect(x, y + 44, w, h - 44);
+    ctx.fillStyle = '#8c5548'; for (let yy = y + 52; yy < y + h; yy += 24) ctx.fillRect(x + 8, yy, w - 16, 3);
+    ctx.fillStyle = '#25222a'; ctx.beginPath(); ctx.moveTo(x - 26, y + 52); ctx.lineTo(x + w / 2, y - 18); ctx.lineTo(x + w + 26, y + 52); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#51404a'; for (let i = 0; i < 8; i++) ctx.fillRect(x - 14 + i * 43, y + 39 - Math.abs(i - 3.5) * 8, 46, 7);
+    for (const wx of [x + 52, x + w - 70]) {
+      ctx.fillStyle = '#172a2d'; ctx.fillRect(wx, y + 90, 22, 28); ctx.fillStyle = '#e3ba68'; ctx.fillRect(wx + 4, y + 94, 6, 20); ctx.fillRect(wx + 13, y + 94, 5, 20);
+    }
+    const doorX = (sanctuaryExterior.doorX - sanctuaryExterior.x) * TILE + x;
+    ctx.fillStyle = '#241c1b'; ctx.fillRect(doorX, y + h - 47, TILE, 47); ctx.fillStyle = '#d4b66f'; ctx.fillRect(doorX + 5, y + h - 39, 3, 3);
+    for (const tx of [doorX - 13, doorX + TILE + 10]) {
+      const flicker = Math.sin(time * 13 + tx) * 2; ctx.fillStyle = '#6b3d2b'; ctx.fillRect(tx, y + h - 37, 4, 21);
+      ctx.fillStyle = '#ff9a45'; ctx.fillRect(tx - 3, y + h - 45 + flicker, 10, 11); ctx.fillStyle = '#ffe17d'; ctx.fillRect(tx, y + h - 43 + flicker, 4, 7);
+    }
+    ctx.fillStyle = '#090b0ddd'; ctx.fillRect(x + w / 2 - 92, y + 54, 184, 24); ctx.strokeStyle = '#d6bd73'; ctx.strokeRect(x + w / 2 - 92.5, y + 53.5, 185, 25);
+    ctx.fillStyle = '#f2dda0'; ctx.font = 'bold 13px Georgia'; ctx.textAlign = 'center'; ctx.fillText('VERDANT STAR SANCTUARY', x + w / 2, y + 70);
+  }
+
+  function drawSanctuaryDecoration(item, cam, time) {
+    const x = item.x * SANCT_TILE - cam.x, y = item.y * SANCT_TILE - cam.y, w = (item.width || 1) * SANCT_TILE, h = (item.height || 1) * SANCT_TILE;
+    if (item.type === 'rug') { ctx.fillStyle = item.id === 'personal-rug' ? '#334c53' : '#643c47'; ctx.fillRect(x + 3, y + 3, w - 6, h - 6); ctx.strokeStyle = '#d1a95e'; ctx.strokeRect(x + 7, y + 7, w - 14, h - 14); }
+    else if (item.type === 'torch') { const f = Math.sin(time * 15 + item.x) * 2; ctx.globalAlpha = .12; ctx.fillStyle = '#ffb253'; ctx.fillRect(x - 22, y - 22, 76, 76); ctx.globalAlpha = 1; ctx.fillStyle = '#6a4730'; ctx.fillRect(x + 14, y + 12, 4, 16); ctx.fillStyle = '#ff8844'; ctx.fillRect(x + 10, y + 3 + f, 12, 13); ctx.fillStyle = '#ffe386'; ctx.fillRect(x + 14, y + 6 + f, 5, 8); }
+    else if (item.type === 'fireplace') { ctx.fillStyle = '#3c3230'; ctx.fillRect(x, y, w, h); ctx.fillStyle = '#181617'; ctx.fillRect(x + 18, y + 18, w - 36, h - 18); ctx.fillStyle = '#ff793d'; ctx.fillRect(x + 28, y + 30, w - 56, h - 30); ctx.fillStyle = '#ffd16b'; ctx.fillRect(x + 43, y + 23 + Math.sin(time * 12) * 3, w - 86, h - 23); }
+    else if (item.type === 'table') { ctx.fillStyle = '#503724'; ctx.fillRect(x, y + 6, w, h - 12); ctx.fillStyle = '#896044'; ctx.fillRect(x + 5, y, w - 10, 12); ctx.fillStyle = '#d6c080'; ctx.fillRect(x + 34, y + 14, 24, 15); ctx.fillStyle = '#7696a0'; ctx.fillRect(x + w - 54, y + 12, 18, 18); }
+    else if (item.type === 'bookshelf') { ctx.fillStyle = '#493322'; ctx.fillRect(x, y, w, h); for (let xx = x + 7; xx < x + w - 5; xx += 12) { ctx.fillStyle = ['#7f4c42','#4c6a6b','#887342'][(xx / 12 | 0) % 3]; ctx.fillRect(xx, y + 5, 8, h - 10); } }
+    else if (item.type === 'weapon-rack') { ctx.fillStyle = '#6a4930'; ctx.fillRect(x + 8, y, 5, h); ctx.fillRect(x + 23, y, 5, h); for (let yy = y + 13; yy < y + h; yy += 28) { ctx.fillStyle = '#bec8c5'; ctx.fillRect(x + 3, yy, 27, 3); } }
+    else if (item.type === 'training-dummy') { ctx.fillStyle = '#85613d'; ctx.fillRect(x + 13, y + 4, 7, 27); ctx.fillRect(x + 4, y + 11, 25, 6); ctx.fillStyle = '#b65648'; ctx.fillRect(x + 7, y + 17, 19, 4); }
+    else if (item.type === 'bed') { ctx.fillStyle = '#49362c'; ctx.fillRect(x, y, w, h); ctx.fillStyle = '#cfb69a'; ctx.fillRect(x + 6, y + 7, w - 12, 25); ctx.fillStyle = '#5d7182'; ctx.fillRect(x + 6, y + 34, w - 12, h - 41); }
+    else if (item.type === 'well') { ctx.fillStyle = '#55605f'; ctx.fillRect(x, y + 7, w, h - 7); ctx.fillStyle = '#182c33'; ctx.fillRect(x + 8, y + 12, w - 16, h - 20); ctx.fillStyle = '#6fe0d3'; ctx.fillRect(x + 13, y + 18, w - 26, h - 30); }
+    else if (item.type === 'chest') { ctx.fillStyle = '#322319'; ctx.fillRect(x, y + 9, w, h - 9); ctx.fillStyle = '#9a6a32'; ctx.fillRect(x + 3, y + 3, w - 6, 15); ctx.fillStyle = '#f0cf73'; ctx.fillRect(x + w / 2 - 4, y + 12, 8, 12); }
+    else if (item.variant === 'meditation') { ctx.fillStyle = '#876247'; ctx.beginPath(); ctx.arc(x + 16, y + 20, 13, 0, TAU); ctx.fill(); ctx.fillStyle = '#d5b568'; ctx.fillRect(x + 8, y + 18, 16, 3); }
+    else if (item.variant === 'forge') { ctx.fillStyle = '#33383e'; ctx.fillRect(x + 6, y + 20, w - 12, h - 25); ctx.fillStyle = '#aeb6b5'; ctx.fillRect(x, y + 12, w, 16); ctx.fillStyle = '#e47a3d'; ctx.fillRect(x + 43, y + 2, 15, 15); }
+    else { ctx.fillStyle = '#53645c'; ctx.fillRect(x + 4, y + 4, w - 8, h - 8); ctx.fillStyle = '#c59f59'; ctx.fillRect(x + 10, y + 10, Math.max(5, w - 20), 5); }
+  }
+
+  function drawSanctuaryNpc(npc, cam, time) {
+    const x = npc.x * SANCT_TILE - cam.x + SANCT_TILE / 2, y = npc.y * SANCT_TILE - cam.y + SANCT_TILE / 2, bob = Math.sin(time * 2 + npc.x) > .82 ? 1 : 0;
+    const skinColors = { warm: '#d2ad83', umber: '#8e6047', golden: '#d7b06e', light: '#e0c09f', olive: '#aa9468', deep: '#714b3d', bronze: '#ad7452', weathered: '#b28c6d' };
+    ctx.fillStyle = '#0007'; ctx.fillRect(x - 10, y + 10, 20, 5); ctx.fillStyle = npc.palette.robe; ctx.fillRect(x - 8, y - 5 + bob, 16, 18);
+    ctx.fillStyle = skinColors[npc.skin] || '#caa47d'; ctx.fillRect(x - 5, y - 13 + bob, 10, 9); ctx.fillStyle = npc.palette.hair; ctx.fillRect(x - 7, y - 16 + bob, 14, 5);
+    ctx.fillStyle = npc.palette.trim; ctx.fillRect(x - 1, y - 4 + bob, 3, 12);
+    if (Math.hypot(player.x - npc.x * SANCT_TILE, player.y - npc.y * SANCT_TILE) < 125) { ctx.fillStyle = '#0a0c0edc'; ctx.fillRect(x - 70, y - 39, 140, 19); ctx.fillStyle = '#f5dfaa'; ctx.font = '12px Georgia'; ctx.textAlign = 'center'; ctx.fillText(npc.name, x, y - 25); }
   }
 
   function drawLandmarks(cam, time) {
@@ -1313,15 +1556,43 @@
     ctx.lineWidth = 1; ctx.strokeStyle = '#ffffff55'; ctx.strokeRect(x0 + cam.x / (WORLD_W * TILE) * mw, mapY + cam.y / (WORLD_H * TILE) * mapH, W / (WORLD_W * TILE) * mw, H / (WORLD_H * TILE) * mapH);
   }
 
+  function drawSanctuaryScene(time) {
+    const worldWidth = sanctuary.width * SANCT_TILE, worldHeight = sanctuary.height * SANCT_TILE;
+    const targetX = clamp(player.x - W / 2, 0, worldWidth - W), targetY = clamp(player.y - H / 2, 0, worldHeight - H);
+    const cam = { x: Math.round(targetX + (Math.random() - .5) * shake), y: Math.round(targetY + (Math.random() - .5) * shake) };
+    ctx.fillStyle = '#171416'; ctx.fillRect(0, 0, W, H);
+    const x0 = Math.floor(cam.x / SANCT_TILE), y0 = Math.floor(cam.y / SANCT_TILE), x1 = Math.ceil((cam.x + W) / SANCT_TILE), y1 = Math.ceil((cam.y + H) / SANCT_TILE);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      if (x < 0 || y < 0 || x >= sanctuary.width || y >= sanctuary.height) continue;
+      const zone = sanctuary.zones.find(area => x >= area.x && y >= area.y && x < area.x + area.width && y < area.y + area.height);
+      const base = zone?.id === 'forge-wing' ? ['#453a34','#4b4038'] : zone?.id === 'archive-wing' ? ['#313942','#353e47'] : zone?.personal ? ['#293b3b','#2e4240'] : ['#3d3435','#44393a'];
+      ctx.fillStyle = base[(x + y) & 1]; ctx.fillRect(x * SANCT_TILE - cam.x, y * SANCT_TILE - cam.y, SANCT_TILE + 1, SANCT_TILE + 1);
+      ctx.fillStyle = '#ffffff08'; ctx.fillRect(x * SANCT_TILE - cam.x + 3, y * SANCT_TILE - cam.y + 3, SANCT_TILE - 6, 2);
+    }
+    sanctuary.decorations.filter(item => item.type === 'rug').forEach(item => drawSanctuaryDecoration(item, cam, time));
+    for (const wall of sanctuary.blockers) { ctx.fillStyle = '#1e2025'; ctx.fillRect(wall.x * SANCT_TILE - cam.x, wall.y * SANCT_TILE - cam.y, wall.width * SANCT_TILE, wall.height * SANCT_TILE); ctx.fillStyle = '#5a4641'; ctx.fillRect(wall.x * SANCT_TILE - cam.x, wall.y * SANCT_TILE - cam.y, wall.width * SANCT_TILE, 7); }
+    for (const door of sanctuary.doors) { ctx.fillStyle = '#76553a'; ctx.fillRect(door.x * SANCT_TILE - cam.x, door.y * SANCT_TILE - cam.y, door.width * SANCT_TILE, door.height * SANCT_TILE); }
+    sanctuary.decorations.filter(item => item.type !== 'rug').forEach(item => drawSanctuaryDecoration(item, cam, time));
+    sanctuary.npcs.slice().sort((a, b) => a.y - b.y).forEach(npc => drawSanctuaryNpc(npc, cam, time));
+    drawPlayer(cam);
+    slashes.forEach(slash => { const p = screenPos(slash.x, slash.y, cam); ctx.strokeStyle = '#ffe6a7'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(p.x, p.y, 31, slash.a - slash.arc, slash.a + slash.arc); ctx.stroke(); });
+    particles.forEach(p => { const s = screenPos(p.x, p.y, cam); ctx.globalAlpha = clamp(p.life / p.max, 0, 1); ctx.fillStyle = p.color; ctx.fillRect(s.x, s.y, p.size, p.size); }); ctx.globalAlpha = 1;
+    const vg = ctx.createRadialGradient(W / 2, H / 2, H * .2, W / 2, H / 2, H * .9); vg.addColorStop(0, 'rgba(255,190,100,.04)'); vg.addColorStop(1, 'rgba(0,0,0,.38)'); ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#0a0c0dcc'; ctx.fillRect(W / 2 - 116, 12, 232, 25); ctx.strokeStyle = '#d1b86f88'; ctx.strokeRect(W / 2 - 116.5, 11.5, 233, 26);
+    ctx.fillStyle = '#efd99c'; ctx.font = 'bold 13px Georgia'; ctx.textAlign = 'center'; ctx.fillText(zoneName().toUpperCase(), W / 2, 29);
+    if (flash > 0) { ctx.fillStyle = `rgba(240,220,144,${flash * .38})`; ctx.fillRect(0, 0, W, H); }
+  }
+
   function draw(timeMs) {
     const time = timeMs / 1000;
+    if (currentScene === 'sanctuary') { drawSanctuaryScene(time); return; }
     const targetX = clamp(player.x - W / 2, 0, WORLD_W * TILE - W), targetY = clamp(player.y - H / 2, 0, WORLD_H * TILE - H);
     const cam = { x: Math.round(targetX + (Math.random() - .5) * shake), y: Math.round(targetY + (Math.random() - .5) * shake) };
     ctx.fillStyle = '#17231f'; ctx.fillRect(0, 0, W, H);
     const x0 = Math.floor(cam.x / TILE), y0 = Math.floor(cam.y / TILE), x1 = Math.ceil((cam.x + W) / TILE), y1 = Math.ceil((cam.y + H) / TILE);
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (x >= 0 && y >= 0 && x < WORLD_W && y < WORLD_H) drawTile(map[y][x], x * TILE - cam.x, y * TILE - cam.y, x, y, time);
     drawLandmarks(cam, time);
-    drawMerchant(cam, time);
+    drawSanctuaryExterior(cam, time);
     plants.forEach(p => drawPlant(p, cam, time));
     resourceNodes.forEach(node => drawResourceNode(node, cam, time));
     pickups.forEach(p => { const s = screenPos(p.x, p.y, cam), b = Math.sin(time * 5 + p.bob) * 3; ctx.fillStyle = '#07110eaa'; ctx.fillRect(s.x - 6, s.y + 6, 12, 3); if (p.type === 'gear') { ctx.fillStyle = '#d2ab58'; ctx.fillRect(s.x - 5, s.y - 6 + b, 10, 11); ctx.fillStyle = '#fff0aa'; ctx.fillRect(s.x - 2, s.y - 8 + b, 4, 4); } else { ctx.fillStyle = '#79e1b7'; ctx.fillRect(s.x - 4, s.y - 5 + b, 8, 9); ctx.fillStyle = '#c8ffe9'; ctx.fillRect(s.x - 1, s.y - 3 + b, 3, 4); } });
@@ -1352,6 +1623,7 @@
       `Moonleaf herbs: ${player.herbs} | Spirit stones: ${player.stones}`,
       ...materials,
       `Key items: ${keysOwned.length ? keysOwned.join(', ') : 'None'}`,
+      `Learned arts: ${skillSystem?.learnedSkills().map(skill => skill.name).join(', ') || 'None'}`,
       player.realm === realms.length - 1 ? 'Current path complete.' : `Next breakthrough: ${missing.length ? missing.join(', ') : 'Requirements met; fill qi and cultivate.'}`
     ].join('\n');
   }
@@ -1399,6 +1671,40 @@
     ui.equipmentStats.textContent = `Damage: ${Math.round(stats.damageMultiplier * 100)}% · Defence: ${Math.round(stats.defense * 100)}%\nHealth bonus: +${stats.maxHpBonus} · Reach: ${38 + stats.reachBonus}\nMove speed: ${Math.round(stats.moveSpeedMultiplier * 100)}% · Attack speed: ${Math.round(100 / stats.attackCooldownMultiplier)}%\nParry window: ${Math.round(stats.parryWindowMultiplier * 100)}% · Dash recovery: ${Math.round(100 / stats.dashCooldownMultiplier)}%`;
   }
 
+  function renderStorage() {
+    ui.storageBagList.replaceChildren(); ui.storageChestList.replaceChildren();
+    const makeButton = (item, side) => {
+      const definition = equipmentApi.getDefinition(item.itemId), button = document.createElement('button');
+      button.type = 'button'; button.className = `storage-item${selectedStorageSide === side && selectedStorageUid === item.uid ? ' selected' : ''}`;
+      const equippedSlot = side === 'bag' ? equipmentApi.SLOTS.find(slot => equipment.equipped[slot] === item.uid) : null;
+      button.innerHTML = `<strong>${definition.name}${equippedSlot ? ` · equipped ${equippedSlot}` : ''}</strong><small>${itemSummary(definition)}</small>`;
+      button.addEventListener('click', () => { selectedStorageSide = side; selectedStorageUid = item.uid; renderStorage(); });
+      return button;
+    };
+    for (const item of equipment.items) ui.storageBagList.append(makeButton(item, 'bag'));
+    for (const item of storageApi.listItems(personalStorage)) ui.storageChestList.append(makeButton(item, 'chest'));
+    if (!equipment.items.length) { const empty = document.createElement('p'); empty.textContent = 'Your backpack and equipment are empty.'; ui.storageBagList.append(empty); }
+    if (!personalStorage.items.length) { const empty = document.createElement('p'); empty.textContent = 'The chest waits in stillness.'; ui.storageChestList.append(empty); }
+    const selected = selectedStorageSide === 'bag' ? equipmentApi.itemByUid(equipment, selectedStorageUid) : storageApi.itemByUid(personalStorage, selectedStorageUid);
+    const definition = selected && equipmentApi.getDefinition(selected.itemId);
+    ui.storageCount.textContent = `(${personalStorage.items.length} stored · unlimited)`;
+    ui.storageDetail.textContent = definition ? `${definition.name} · ${definition.rarity}\n${itemSummary(definition)}` : 'Select an item to move it.';
+    ui.depositItem.disabled = !selected || selectedStorageSide !== 'bag';
+    ui.withdrawItem.disabled = !selected || selectedStorageSide !== 'chest';
+  }
+
+  function depositSelectedItem() {
+    const result = storageApi.deposit(personalStorage, equipment, selectedStorageUid, { allowEquipped: true });
+    if (!result.ok) { addMessage('That item could not be stored.', 'bad'); return; }
+    selectedStorageUid = null; selectedStorageSide = null; player.hp = Math.min(player.hp, effectiveMaxHp()); save(); renderStorage(); updateUI();
+  }
+
+  function withdrawSelectedItem() {
+    const result = storageApi.withdraw(personalStorage, equipment, selectedStorageUid);
+    if (!result.ok) { addMessage(result.reason === 'inventory-full' ? 'Your backpack is full.' : 'That item could not be withdrawn.', 'bad'); return; }
+    selectedStorageUid = null; selectedStorageSide = null; save(); renderStorage(); updateUI();
+  }
+
   function renderKeybinds() {
     ui.keybindList.replaceChildren();
     for (const action of keybindApi.ACTIONS) {
@@ -1409,8 +1715,9 @@
 
   function updateDevStatus() {
     if (!ui.devStatus) return;
+    const debugTile = currentScene === 'sanctuary' ? SANCT_TILE : TILE;
     ui.devStatus.textContent = [
-      `Tile: ${(player.x / TILE).toFixed(1)}, ${(player.y / TILE).toFixed(1)} | ${zoneName()}`,
+      `Scene: ${currentScene} | Tile: ${(player.x / debugTile).toFixed(1)}, ${(player.y / debugTile).toFixed(1)} | ${zoneName()}`,
       `Realm: ${realms[player.realm].name} ${roman(player.stage)} | Tutorial: attack ${tutorial.attacked}, cultivate ${tutorial.cultivated}`,
       `HP: ${Math.ceil(player.hp)} / ${effectiveMaxHp()} | Qi: ${Math.floor(player.qi)} / ${player.maxQi}`,
       `Caches: ${openedCacheCount()} / ${treasures.length} | Bosses: ${Object.values(bossStates).filter(Boolean).length} / ${Object.keys(bossStates).length} | Keys: ${player.keyItems.size}`,
@@ -1418,7 +1725,7 @@
     ].join('\n');
   }
 
-  function menuElement(name) { return { settings: ui.settingsMenu, dev: ui.devMenu, inventory: ui.inventoryMenu, dialogue: ui.dialogueMenu }[name] || null; }
+  function menuElement(name) { return { settings: ui.settingsMenu, dev: ui.devMenu, inventory: ui.inventoryMenu, dialogue: ui.dialogueMenu, storage: ui.storageMenu }[name] || null; }
 
   function openMenu(name) {
     if (activeMenu === name) return;
@@ -1430,6 +1737,7 @@
     menu.hidden = false;
     if (name === 'dev') updateDevStatus();
     else if (name === 'inventory') renderInventory();
+    else if (name === 'storage') renderStorage();
     else if (name === 'settings') { updateInventoryText(); renderKeybinds(); }
     const focusTarget = menu.querySelector('button');
     if (focusTarget) focusTarget.focus();
@@ -1440,11 +1748,12 @@
     const closing = activeMenu, menu = menuElement(activeMenu);
     menu.hidden = true; activeMenu = null; paused = menuWasPaused;
     ui.clearConfirm.hidden = true;
-    remappingAction = null; if (closing === 'dialogue') dialogueSession = null;
+    remappingAction = null; if (closing === 'dialogue') { dialogueSession = null; activeNpc = null; }
     releaseAllInputs(); canvas.focus();
   }
 
   function safeTeleport(tx, ty) {
+    currentScene = 'world'; mapOpen = false;
     const baseX = clamp((tx + .5) * TILE, player.r, WORLD_W * TILE - player.r);
     const baseY = clamp((ty + .5) * TILE, player.r, WORLD_H * TILE - player.r);
     for (let radius = 0; radius <= 6; radius++) {
@@ -1509,6 +1818,17 @@
       case 'grant-dual-set': grantGearSet('dual_swords'); break;
       case 'grant-greatsword-set': grantGearSet('greatsword'); break;
       case 'grant-sword-set': grantGearSet('sword'); break;
+      case 'learn-all-skills': configureSkillSystem({ learned: Object.keys(skillsApi.CATALOG) }); player.hp = Math.min(player.hp, effectiveMaxHp()); break;
+      case 'enter-sanctuary': enterSanctuary(); break;
+      case 'sanctuary-corner':
+        if (currentScene === 'world') worldReturnPosition = { x: player.x, y: player.y };
+        currentScene = 'sanctuary'; mapOpen = false; player.x = 39.5 * SANCT_TILE; player.y = 27 * SANCT_TILE; player.facing = Math.PI / 2; break;
+      case 'sanctuary-well':
+        if (currentScene === 'world') worldReturnPosition = { x: player.x, y: player.y };
+        currentScene = 'sanctuary'; mapOpen = false; player.x = 34.5 * SANCT_TILE; player.y = 24.5 * SANCT_TILE; player.facing = Math.PI / 2; break;
+      case 'sanctuary-tutors':
+        if (currentScene === 'world') worldReturnPosition = { x: player.x, y: player.y };
+        currentScene = 'sanctuary'; mapOpen = false; player.x = 24.5 * SANCT_TILE; player.y = 27 * SANCT_TILE; player.facing = 0; break;
       case 'clear-materials':
         player.herbs = player.stones = 0; for (const item of Object.keys(player.ingredients)) player.ingredients[item] = 0;
         player.keyItems = new Set(bossDefs.filter(b => bossStates[b.id]).map(b => b.keyItem)); reconcile = false; break;
@@ -1609,7 +1929,7 @@
     if (!document.hidden) return;
     releaseAllInputs();
     if (multiplayer?.arena.active) multiplayer.arena.setInput({ moveX: 0, moveY: 0, aimX: 1, aimY: 0, attack: false, parry: false, dash: false }, true);
-    else multiplayer?.updatePresence({ x: player.x, y: player.y, facing: player.facing.toFixed(3), moving: false, action: 'none' }, true);
+    else if (currentScene === 'world') multiplayer?.updatePresence({ x: player.x, y: player.y, facing: player.facing.toFixed(3), moving: false, action: 'none' }, true);
   });
   document.querySelectorAll('[data-key], [data-action]').forEach(btn => {
     const k = btn.dataset.action ? `@${btn.dataset.action}` : btn.dataset.key;
@@ -1649,6 +1969,7 @@
   ui.closeSettings.addEventListener('click', closeMenu);
   ui.closeInventory.addEventListener('click', closeMenu);
   ui.closeDialogue.addEventListener('click', closeMenu);
+  ui.closeStorage.addEventListener('click', closeMenu);
   ui.closeDev.addEventListener('click', closeMenu);
   ui.equipItem.addEventListener('click', () => {
     const result = equipmentApi.equipItem(equipment, selectedItemUid);
@@ -1663,6 +1984,8 @@
     renderInventory(); updateUI();
   });
   ui.dropItem.addEventListener('click', dropSelectedItem);
+  ui.depositItem.addEventListener('click', depositSelectedItem);
+  ui.withdrawItem.addEventListener('click', withdrawSelectedItem);
   ui.resetKeybinds.addEventListener('click', () => { keybinds.reset(); remappingAction = null; renderKeybinds(); save(); });
   document.querySelectorAll('[data-settings-tab]').forEach(button => button.addEventListener('click', () => {
     const controls = button.dataset.settingsTab === 'controls'; ui.settingsControls.hidden = !controls; ui.settingsProgress.hidden = controls;
@@ -1700,6 +2023,7 @@
   });
   addEventListener('beforeunload', () => { if (!suppressSave) save(); });
 
+  configureSkillSystem();
   const hadSave = load();
   if (!hadSave) player.hp = effectiveMaxHp();
   populate();
