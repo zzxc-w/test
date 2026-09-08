@@ -87,6 +87,7 @@ The project is a dependency-free static site:
 ## Current state and known issues
 
 - Multiplayer v1 is live on GitHub Pages: cosmetic shared-world presence, proximity challenges, a separate normalized server-authoritative arena, reconnect handling, and iPad arena controls. Staging and production Workers are deployed, and `index.html` uses the production endpoint.
+- Equipment builds, Quartermaster Lian, remappable controls, reusable interaction systems, and arena prediction are live from commit `3c28088`; Pages run `34211870430` completed successfully and the live site serves `game.js?v=11` / `arena.js?v=3`.
 - Low-latency arena protocol support is deployed to staging (Worker version `7b489a5f-2bef-4a94-bbad-1a552e2f6de5`) and production (`9f7d8115-aa85-4864-ba67-434fb5a5cb3f`); both passed the live two-client test before the browser client was published.
 - Multiplayer and arena state is deliberately excluded from `verdant-star-save`; the solo simulation pauses during a duel and remains the fail-open fallback.
 - Browser-client tests, 27 Worker protocol/simulation/security/lifecycle tests, 23 focused system tests, the gameplay smoke suite, and browser integration checks pass. Automated live tests passed against staging and production for health, two-client presence, challenge acceptance, isolated arena admission/input, and reconnect. A local narrow-viewport browser pass covered inventory, remapping, dialogue, and shop rendering.
