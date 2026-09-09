@@ -43,7 +43,7 @@ _Last updated: 2026-09-09. Verify this summary against the current branch, `git 
 
 ## Current state / known issues
 
-- Sanctuary-density, inventory-reliability, and Heavenly Tribulation work is on `feature/sanctuary-endgame` pending publication. Syntax, 68 focused system tests, gameplay smoke tests, and multiplayer client tests pass.
+- Sanctuary-density, inventory-reliability, and Heavenly Tribulation work shipped to `main` in `0772cb0` and is live on GitHub Pages. Syntax, 68 focused system tests, gameplay smoke tests, multiplayer client tests, Pages deployment, and a live desktop browser pass all succeeded.
 - Inventory save recovery now preserves valid gear behind malformed entries, repairs duplicate UID equipment assignment, and keeps failed full-bag moves byte-for-byte atomic. The responsive cards show compact type/rarity labels and highlight equipped selection.
 - Tribulation affixes are authored future hooks; playable trials currently apply wave, elite, health, damage, speed, parryability, and echo-boss scaling.
 - Ember Palm is the only active learned art. Gale Step, Flowing Guard, and Iron Root are passive; iron ore has no source.
