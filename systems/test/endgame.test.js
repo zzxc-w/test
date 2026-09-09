@@ -30,24 +30,26 @@ function clear(system, tier) {
 
 test("trial configurations are deterministic, immutable, and escalate", () => {
   const first = Endgame.trialConfig(1);
-  const fifth = Endgame.trialConfig(5);
-  assert.deepEqual(Endgame.trialConfig(5), fifth);
-  assert.equal(Object.isFrozen(fifth), true);
-  assert.equal(Object.isFrozen(fifth.waves), true);
-  assert.equal(Object.isFrozen(fifth.boss.affixes[0]), true);
-  assert.ok(fifth.waves.length > first.waves.length);
-  assert.ok(fifth.boss.hpMultiplier > first.boss.hpMultiplier);
-  assert.ok(fifth.entryCosts[0].amount > first.entryCosts[0].amount);
+  const third = Endgame.trialConfig(3);
+  assert.deepEqual(Endgame.trialConfig(3), third);
+  assert.equal(Object.isFrozen(third), true);
+  assert.equal(Object.isFrozen(third.waves), true);
+  assert.equal(Object.isFrozen(third.boss.affixes[0]), true);
+  assert.ok(third.boss.hpMultiplier > first.boss.hpMultiplier);
+  assert.ok(third.entryCosts[0].amount > first.entryCosts[0].amount);
+  assert.equal(third.cultivation.ascensionReady, true);
+  assert.equal(Endgame.trialConfig(4), null);
 });
 
-test("tier milestones map to higher Nascent Soul stages", () => {
+test("the three first clears map Nascent Soul I to IV, VII, and IX", () => {
   assert.equal(Endgame.stageForTier(0), 1);
-  assert.equal(Endgame.stageForTier(2), 1);
-  assert.equal(Endgame.stageForTier(3), 2);
-  assert.equal(Endgame.stageForTier(6), 3);
-  assert.equal(Endgame.stageForTier(45), 9);
+  assert.equal(Endgame.stageForTier(1), 4);
+  assert.equal(Endgame.stageForTier(2), 7);
+  assert.equal(Endgame.stageForTier(3), 9);
   assert.equal(Endgame.stageForTier(999), 9);
-  assert.equal(Endgame.thresholdForStage(4), 10);
+  assert.equal(Endgame.thresholdForStage(4), 1);
+  assert.equal(Endgame.thresholdForStage(7), 2);
+  assert.equal(Endgame.thresholdForStage(9), 3);
 });
 
 test("deserialize sanitizes corrupt values and rejects invalid active trials", () => {
@@ -56,13 +58,13 @@ test("deserialize sanitizes corrupt values and rejects invalid active trials", (
     heavenlyMarks: 0, heavenlyInsight: 0, nascentStage: 1, sequence: 0, active: null
   });
   const state = Endgame.deserialize({
-    bestTier: 3.9, totalCompletions: -2, failedAttempts: Infinity,
-    heavenlyMarks: "7", heavenlyInsight: 24.8, nascentStage: 99, sequence: 4,
-    active: { attemptId: "fake", tier: 4 }
+    bestTier: 99, totalCompletions: -2, failedAttempts: Infinity,
+    heavenlyMarks: "7", heavenlyInsight: 24.8, nascentStage: 2, sequence: 4,
+    active: { attemptId: "tribulation-5", tier: 4 }
   });
   assert.deepEqual(state, {
     version: 1, bestTier: 3, totalCompletions: 0, failedAttempts: 0,
-    heavenlyMarks: 7, heavenlyInsight: 24, nascentStage: 2, sequence: 4, active: null
+    heavenlyMarks: 7, heavenlyInsight: 24, nascentStage: 9, sequence: 4, active: null
   });
 });
 
@@ -97,17 +99,17 @@ test("begin pays once, persists an active attempt, and blocks another", () => {
 });
 
 test("entry payment adapter failure leaves persistent state untouched", () => {
-  // Tier four also costs marks. A failure in the external wallet must happen
+  // Tier two also costs marks. A failure in the external wallet must happen
   // before those marks or the active-attempt sequence are changed.
   const throwing = fixture({
-    state: { bestTier: 3, heavenlyMarks: 2 },
+    state: { bestTier: 1, heavenlyMarks: 2 },
     resources: {
       get: () => 500,
       spend: () => { throw new Error("wallet unavailable"); },
       credit: () => { throw new Error("nothing was paid, so no refund is due"); }
     }
   });
-  assert.equal(throwing.system.begin(4, {}).code, "payment_failed");
+  assert.equal(throwing.system.begin(2, {}).code, "payment_failed");
   assert.equal(throwing.system.serialize().heavenlyMarks, 2);
   assert.equal(throwing.system.active(), null);
   assert.equal(throwing.system.serialize().sequence, 0);
@@ -138,16 +140,33 @@ test("failure consumes the entry, records the loss, and grants no reward", () =>
   assert.equal(value.system.fail(begun.active.attemptId).code, "no_active_trial");
 });
 
-test("clearing milestone tier three advances stage and reports the next path", () => {
+test("each first clear advances three stages until tier three becomes ascension-ready", () => {
+  const value = fixture();
+  const first = clear(value.system, 1);
+  const second = clear(value.system, 2);
+  const result = clear(value.system, 3);
+  assert.equal(first.nascentStage, 4);
+  assert.equal(second.nascentStage, 7);
+  assert.equal(result.stageAdvanced, true);
+  assert.equal(result.nascentStage, 9);
+  assert.equal(result.ascensionReady, true);
+  assert.deepEqual(value.system.progress(), {
+    nascentStage: 9, bestTier: 3, nextStage: null, nextStageAtTier: null,
+    tiersRemaining: 0, ascensionReady: true
+  });
+});
+
+test("after tier three no further tier opens, but cleared trials remain replayable", () => {
   const value = fixture();
   clear(value.system, 1);
   clear(value.system, 2);
-  const result = clear(value.system, 3);
-  assert.equal(result.stageAdvanced, true);
-  assert.equal(result.nascentStage, 2);
-  assert.deepEqual(value.system.progress(), {
-    nascentStage: 2, bestTier: 3, nextStage: 3, nextStageAtTier: 6, tiersRemaining: 3
-  });
+  clear(value.system, 3);
+  assert.equal(value.system.inspect(4, {}).code, "invalid_tier");
+  const replay = clear(value.system, 2);
+  assert.equal(replay.stageAdvanced, false);
+  assert.equal(replay.nascentStage, 9);
+  assert.equal(replay.state.bestTier, 3);
+  assert.equal(replay.state.totalCompletions, 4);
 });
 
 test("valid active attempts survive a serialized round trip", () => {

@@ -49,6 +49,18 @@ test("roster provides every planned placeholder service with distinct skins", ()
   });
 });
 
+test("Scholar Bo exposes a stable heavenly ascension hook without replacing his formation service", () => {
+  const authoredScholar = SANCTUARY.npcs.find((npc) => npc.id === "scholar-bo");
+  const runtimeScholar = createSanctuary().npcs.find((npc) => npc.id === "scholar-bo");
+  assert.ok(authoredScholar);
+  assert.equal(authoredScholar.name, "Scholar Bo");
+  assert.equal(authoredScholar.service, "formation-scholar");
+  assert.equal(authoredScholar.action, "heavenly_ascension");
+  assert.equal(runtimeScholar.action, "heavenly_ascension");
+  assert.deepEqual({ x: authoredScholar.x, y: authoredScholar.y }, { x: 39, y: 14 });
+  assert.ok(authoredScholar.dialogue.includes("formation"));
+});
+
 test("walls collide, door openings pass, and runtime copies do not mutate authored data", () => {
   const runtime = createSanctuary({ owner: "test-player" });
   assert.equal(isPassable(runtime, 0, 10), false);

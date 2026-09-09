@@ -6,7 +6,7 @@
   "use strict";
 
   const VERSION = 1;
-  const MAX_TIER = 999;
+  const MAX_TIER = 3;
   const MAX_NASCENT_STAGE = 9;
   const DEFAULT_BOSSES = Object.freeze([
     "jadehorn", "tempest_crane", "mirecoil_matriarch", "sectbreaker", "starfallen_warden"
@@ -37,18 +37,21 @@
 
   function stageForTier(tier) {
     const cleared = integer(tier, 0, 0, MAX_TIER);
-    if (!cleared) return 1;
-    return Math.min(MAX_NASCENT_STAGE, Math.max(1, Math.floor((Math.sqrt(8 * cleared + 1) - 1) / 2)));
+    return [1, 4, 7, 9][cleared];
   }
 
   function thresholdForStage(stage) {
     const target = integer(stage, 1, 1, MAX_NASCENT_STAGE);
-    return target <= 1 ? 0 : target * (target + 1) / 2;
+    if (target <= 1) return 0;
+    if (target <= 4) return 1;
+    if (target <= 7) return 2;
+    return 3;
   }
 
   function trialConfig(tier) {
-    const value = integer(tier, 0, 1, MAX_TIER);
-    if (!value) return null;
+    const numericTier = Number(tier);
+    if (!Number.isInteger(numericTier) || numericTier < 1 || numericTier > MAX_TIER) return null;
+    const value = numericTier;
     const waveCount = Math.min(7, 3 + Math.floor((value - 1) / 3));
     const affixCount = Math.min(AFFIXES.length, 1 + Math.floor((value - 1) / 3));
     const waves = [];
@@ -72,7 +75,7 @@
         : "Thunder waits beyond the sanctuary wards.",
       entryCosts: [
         { type: "resource", id: "spiritStones", amount: 18 + value * 7 },
-        ...(value >= 4 ? [{ type: "heavenlyMarks", id: "heavenlyMarks", amount: Math.ceil((value - 3) / 2) }] : [])
+        ...(value >= 2 ? [{ type: "heavenlyMarks", id: "heavenlyMarks", amount: value }] : [])
       ],
       rewards: {
         heavenlyMarks: 2 + Math.floor(value / 2),
@@ -88,7 +91,8 @@
       },
       cultivation: {
         resultingStage: targetStage,
-        advancesStage: value === thresholdForStage(targetStage) && targetStage > 1
+        advancesStage: true,
+        ascensionReady: value === MAX_TIER
       }
     });
   }
@@ -103,10 +107,12 @@
     const sequence = integer(source.sequence, 0, 0, Number.MAX_SAFE_INTEGER);
     let active = null;
     if (source.active && typeof source.active === "object") {
-      const tier = integer(source.active.tier, 0, 1, MAX_TIER);
+      const tier = Number(source.active.tier);
       const attemptId = typeof source.active.attemptId === "string" && /^tribulation-\d+$/.test(source.active.attemptId)
         ? source.active.attemptId : "";
-      if (tier && tier <= bestTier + 1 && attemptId) active = { attemptId: attemptId, tier: tier };
+      if (Number.isInteger(tier) && tier >= 1 && tier <= MAX_TIER && tier <= bestTier + 1 && attemptId) {
+        active = { attemptId: attemptId, tier: tier };
+      }
     }
     return {
       version: VERSION,
@@ -236,6 +242,7 @@
         rewards: { ...trial.rewards },
         stageAdvanced: state.nascentStage > previousStage,
         nascentStage: state.nascentStage,
+        ascensionReady: state.bestTier >= MAX_TIER,
         state: snapshot()
       };
     }
@@ -251,14 +258,16 @@
 
     function progress() {
       const current = state.nascentStage;
-      const nextStage = Math.min(MAX_NASCENT_STAGE, current + 1);
-      const nextTier = current >= MAX_NASCENT_STAGE ? null : thresholdForStage(nextStage);
+      const ascensionReady = state.bestTier >= MAX_TIER;
+      const nextTier = ascensionReady ? null : state.bestTier + 1;
+      const nextStage = nextTier === null ? null : stageForTier(nextTier);
       return {
         nascentStage: current,
         bestTier: state.bestTier,
-        nextStage: current >= MAX_NASCENT_STAGE ? null : nextStage,
+        nextStage: nextStage,
         nextStageAtTier: nextTier,
-        tiersRemaining: nextTier === null ? 0 : Math.max(0, nextTier - state.bestTier)
+        tiersRemaining: ascensionReady ? 0 : MAX_TIER - state.bestTier,
+        ascensionReady: ascensionReady
       };
     }
 

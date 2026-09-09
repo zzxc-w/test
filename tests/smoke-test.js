@@ -12,8 +12,8 @@ for (const id of ['settingsButton','multiplayerButton','settingsMenu','closeSett
   assert(htmlIds.includes(id), `missing UI element #${id}`);
 }
 for (const file of ['multiplayer/config.js?v=1','multiplayer/presence.js?v=2','multiplayer/drops.js?v=1','multiplayer/challenges.js?v=1','multiplayer/arena.js?v=3','multiplayer/client.js?v=3']) assert(html.includes(`src="${file}"`), `missing multiplayer script ${file}`);
-assert(html.indexOf('multiplayer/config.js') < html.indexOf('multiplayer/drops.js') && html.indexOf('multiplayer/drops.js') < html.indexOf('multiplayer/client.js') && html.indexOf('multiplayer/client.js') < html.indexOf('game.js?v=14'), 'multiplayer scripts must load before the game bridge');
-for (const file of ['systems/equipment.js?v=1','systems/keybinds.js?v=1','systems/dialogue.js?v=1','systems/shop.js?v=1','systems/cultivation.js?v=1','systems/storage.js?v=1','systems/sanctuary.js?v=1','systems/skills.js?v=1','systems/endgame.js?v=1']) assert(html.includes(`src="${file}"`), `missing gameplay system ${file}`);
+assert(html.indexOf('multiplayer/config.js') < html.indexOf('multiplayer/drops.js') && html.indexOf('multiplayer/drops.js') < html.indexOf('multiplayer/client.js') && html.indexOf('multiplayer/client.js') < html.indexOf('game.js?v=15'), 'multiplayer scripts must load before the game bridge');
+for (const file of ['systems/equipment.js?v=1','systems/keybinds.js?v=1','systems/dialogue.js?v=1','systems/shop.js?v=1','systems/cultivation.js?v=1','systems/storage.js?v=1','systems/sanctuary.js?v=1','systems/skills.js?v=1','systems/endgame.js?v=1','systems/immortal-realm.js?v=1']) assert(html.includes(`src="${file}"`), `missing gameplay system ${file}`);
 assert(html.includes("apiBase: 'https://verdant-star-multiplayer.zxuchen.workers.dev'"), 'production multiplayer endpoint must be configured');
 assert(!html.includes('SESSION_SIGNING_KEY'), 'multiplayer signing secret must never be shipped to the browser');
 assert(/data-action="parry"[^>]*>Parry</.test(html), 'touch controls must include Parry');
@@ -29,14 +29,16 @@ const source = original.replace(needle, `  configureNameSetup(); updateUI();
     currentBreakthroughRequirement, missingRequirements, breakthrough, enemyProfile,
     startEnemyAttack, resolveEnemyAttack, updateEnemyCombat, parry, attack, useTalisman, useLearnedArt, cultivate, killEnemy, loseCultivationStage, handlePlayerDeath, handleActions, draw, updateUI, cleanPlayerName, configureNameSetup, dropSelectedItem, collectGroundGear,
     interact, enterSanctuary, leaveSanctuary, interactSanctuary, sanctuary, sanctuaryPassableAt, nearestSanctuaryInteraction,
-    startTribulation, completeTribulation, failTribulation, resumeTribulation, allBossesDefeated, tribulationGate,
+    startTribulation, completeTribulation, failTribulation, resumeTribulation, allBossesDefeated, tribulationGate, completeAllTribulationsDev,
+    ascendWithScholarBo, enterAscendedRealm, leaveAscendedRealm, startNearbyRift, attemptSoulTransformation, ascendedPassableAt, ascendedMap, ascendedAreas, riftNodes, ascensionGate,
     get quest() { return quest; }, set quest(value) { quest = value; },
     get mapOpen() { return mapOpen; },
     get playerName() { return playerName; }, set playerName(value) { playerName = value; },
     get equipment() { return equipment; }, get keybinds() { return keybinds; }, equipmentApi, keybindApi,
-    get personalStorage() { return personalStorage; }, get skillSystem() { return skillSystem; }, get endgameSystem() { return endgameSystem; }, storageApi, sanctuaryApi, skillsApi, endgameApi,
+    get personalStorage() { return personalStorage; }, get skillSystem() { return skillSystem; }, get endgameSystem() { return endgameSystem; }, get immortalRealmSystem() { return immortalRealmSystem; }, storageApi, sanctuaryApi, skillsApi, endgameApi, immortalRealmApi,
     get currentScene() { return currentScene; }, set currentScene(value) { currentScene = value; },
     get enemies() { return enemies; },
+    get activeRiftId() { return activeRiftId; },
     get pickups() { return pickups; }, set selectedItemUid(value) { selectedItemUid = value; },
     get suppressSave() { return suppressSave; }
   };
@@ -89,7 +91,7 @@ class FakeElement {
   assert.strictEqual(t.derivedCombatStats().weaponStyle, 'spear', 'equipped weapon must drive combat style');
   t.keybinds.setBinding('attack', 'x', 0); t.save();
   const saved = JSON.parse(storage.get('verdant-star-save'));
-  assert.strictEqual(saved.version, 10); assert(saved.equipment && saved.keybinds.attack.includes('x'), 'equipment and remapped controls must persist in v10');
+  assert.strictEqual(saved.version, 11); assert(saved.equipment && saved.keybinds.attack.includes('x'), 'equipment and remapped controls must persist in v11');
 }
 
 {
@@ -120,7 +122,7 @@ class FakeElement {
   t.player.stones = 10; assert(t.skillSystem.learn('ember_palm').ok, 'starter tutor art should be learnable');
   t.save();
   const saved = JSON.parse(storage.get('verdant-star-save'));
-  assert.equal(saved.version, 10); assert.equal(saved.location, 'sanctuary');
+  assert.equal(saved.version, 11); assert.equal(saved.location, 'sanctuary');
   assert.equal(saved.personalStorage.items.length, 1); assert(saved.skills.learned.includes('ember_palm'));
   const reloaded = boot(saved);
   assert.equal(reloaded.t.currentScene, 'sanctuary', 'interior location should survive reload');
@@ -136,6 +138,8 @@ class FakeElement {
 
 {
   const bosses = { jadehorn: true, tempest_crane: true, mirecoil_matriarch: true, sectbreaker: true, starfallen_warden: true };
+  const migrated = boot({ version: 10, name: 'Old Heavenly Save', realm: 4, stage: 2, maxQi: 832, qi: 400, bosses, endgame: { bestTier: 3, heavenlyMarks: 4, heavenlyInsight: 30 } });
+  assert.equal(migrated.t.player.stage, 9, 'v10 tier-three saves should migrate to the redesigned Nascent Soul summit');
   const { t, storage } = boot({ version: 9, name: 'Tribulation Tester', realm: 4, stage: 1, maxQi: 9999, qi: 9999, stones: 1000, bosses });
   assert.equal(t.player.maxQi, 640, 'v9 Nascent Soul saves must migrate away from the old unreachable qi cap');
   assert(t.allBossesDefeated());
@@ -150,16 +154,47 @@ class FakeElement {
   assert.equal(phasesCleared, t.endgameApi.trialConfig(1).waves.length + 1, 'waves should culminate in one echo boss phase');
   for (let tier = 2; tier <= 3; tier++) { assert(t.startTribulation(tier)); t.completeTribulation(); }
   assert.equal(t.endgameSystem.serialize().bestTier, 3);
-  assert.equal(t.player.stage, 2, 'the first tribulation milestone should advance Nascent Soul cultivation');
+  assert.equal(t.player.stage, 9, 'three tribulations should complete all nine Nascent Soul stages');
   t.save();
   const saved = JSON.parse(storage.get('verdant-star-save'));
-  assert.equal(saved.version, 10); assert.equal(saved.endgame.bestTier, 3); assert.equal(saved.stage, 2);
+  assert.equal(saved.version, 11); assert.equal(saved.endgame.bestTier, 3); assert.equal(saved.stage, 9);
+  assert.equal(t.startTribulation(4), false, 'only three main tribulation tiers should exist');
+  assert(t.ascendWithScholarBo(), 'Scholar Bo should ascend a completed Nascent Soul');
+  assert.equal(t.currentScene, 'ascended'); assert.equal(t.player.realm, 5); assert.equal(t.player.stage, 1);
+  assert.equal(t.ascendedMap.length, 72); assert.equal(t.ascendedMap[0].length, 96); assert.equal(t.ascendedAreas.length, 3);
+  assert(t.enemies.some(enemy => enemy.higherRealm), 'the higher realm needs its own enemy population');
+  assert(!t.enemies.some(enemy => enemy.realmEnemyId === 'void_harbinger'), 'the Void Harbinger must remain sealed before all three rifts');
+  const firstRift = t.riftNodes[0]; t.player.x = firstRift.x; t.player.y = firstRift.y + 54; assert(t.startNearbyRift());
+  let riftPhases = 0;
+  while (t.activeRiftId) {
+    const echoes = t.enemies.filter(enemy => enemy.riftEvent && enemy.alive); assert(echoes.length, 'an active rift must contain enemies');
+    echoes.forEach(enemy => t.killEnemy(enemy)); assert(++riftPhases < 10, 'rift should stabilize in bounded waves');
+  }
+  assert.equal(t.immortalRealmSystem.stats.riftsStabilized, 1);
+  for (const nextRift of t.riftNodes.slice(1)) {
+    t.player.x = nextRift.x; t.player.y = nextRift.y + 54; assert(t.startNearbyRift());
+    while (t.activeRiftId) t.enemies.filter(enemy => enemy.riftEvent && enemy.alive).forEach(enemy => t.killEnemy(enemy));
+  }
+  assert.equal(t.player.stage, 2, 'two stabilized rifts should awaken Soul Transformation II');
+  const harbinger = t.enemies.find(enemy => enemy.realmEnemyId === 'void_harbinger' && enemy.alive && enemy.boss);
+  assert(harbinger, 'stabilizing all rifts should awaken the higher-realm boss'); t.killEnemy(harbinger);
+  assert(t.attemptSoulTransformation(), 'rift, boss, shard, and decree progress should unlock the final rite');
+  assert.equal(t.player.stage, 3); t.draw(2000); t.save();
+  const ascendedSave = JSON.parse(storage.get('verdant-star-save'));
+  assert.equal(ascendedSave.location, 'ascended'); assert.equal(ascendedSave.immortalRealm.stats.riftsStabilized, 3);
+  const restored = boot(ascendedSave); assert.equal(restored.t.currentScene, 'ascended'); assert.equal(restored.t.player.stage, 3);
+}
 
-  assert(t.startTribulation(4));
-  const failures = t.endgameSystem.serialize().failedAttempts;
-  t.handlePlayerDeath();
-  assert.equal(t.endgameSystem.active(), null, 'defeat must end an active tribulation');
-  assert.equal(t.endgameSystem.serialize().failedAttempts, failures + 1);
+{
+  const { t, storage } = boot(); t.completeAllTribulationsDev(); t.currentScene = 'sanctuary'; assert(t.ascendWithScholarBo());
+  const firstAscensionHp = t.player.maxHp; t.player.stage = 1; t.handlePlayerDeath();
+  assert.equal(t.player.realm, 4); assert.equal(t.player.stage, 9); assert(t.ascendWithScholarBo());
+  assert.equal(t.player.maxHp, firstAscensionHp - 18, 're-ascension after death must not repeat permanent stat rewards');
+  const rift = t.riftNodes[0]; t.player.x = rift.x; t.player.y = rift.y + 54; assert(t.startNearbyRift());
+  t.killEnemy(t.enemies.find(enemy => enemy.riftEvent && enemy.alive)); t.save();
+  const restored = boot(JSON.parse(storage.get('verdant-star-save')));
+  assert.equal(restored.t.activeRiftId, rift.id, 'an unfinished rift must persist across reload');
+  assert(restored.t.enemies.some(enemy => enemy.riftEvent && enemy.alive), 'an unfinished rift must reform its remaining echoes');
 }
 
 function boot(saved) {
@@ -185,7 +220,7 @@ function boot(saved) {
     localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
     location: { reload: () => { reloads++; } },
     EquipmentSystem: require('../systems/equipment.js'), VerdantKeybinds: require('../systems/keybinds.js'), VerdantDialogue: require('../systems/dialogue.js'), VerdantShop: require('../systems/shop.js'), VerdantCultivation: require('../systems/cultivation.js'),
-    StorageSystem: require('../systems/storage.js'), VerdantSanctuary: require('../systems/sanctuary.js'), VerdantSkills: require('../systems/skills.js'), VerdantEndgame: require('../systems/endgame.js')
+    StorageSystem: require('../systems/storage.js'), VerdantSanctuary: require('../systems/sanctuary.js'), VerdantSkills: require('../systems/skills.js'), VerdantEndgame: require('../systems/endgame.js'), VerdantImmortalRealm: require('../systems/immortal-realm.js')
   };
   sandbox.globalThis = sandbox;
   vm.runInNewContext(source, sandbox, { filename: sourcePath });
@@ -196,7 +231,7 @@ function boot(saved) {
   const { t } = boot();
   let previous = Infinity;
   let minimum = Infinity;
-  for (let realm = 0; realm < 5; realm++) for (let stage = 1; stage <= [3, 5, 4, 3, 9][realm]; stage++) {
+  for (let realm = 0; realm < 6; realm++) for (let stage = 1; stage <= [3, 5, 4, 3, 9, 3][realm]; stage++) {
     t.player.realm = realm; t.player.stage = stage;
     const cooldown = t.dashCooldownDuration();
     assert(cooldown <= previous + 1e-9, 'dash cooldown must not increase');
@@ -208,7 +243,7 @@ function boot(saved) {
 
 {
   const { t } = boot();
-  const stages = [3, 5, 4, 3, 9];
+  const stages = [3, 5, 4, 3, 9, 3];
   for (let realm = 0; realm < stages.length; realm++) for (let stage = 1; stage <= stages[realm]; stage++) {
     t.player.realm = realm; t.player.stage = stage; t.player.maxHp = 1000; t.player.attack = 500;
     const before = t.cultivationAdvancements(), lost = t.loseCultivationStage(), after = t.cultivationAdvancements();
@@ -274,7 +309,7 @@ function boot(saved) {
   assert(migrated.t.player.keyItems.has('sectbreaker_core'), 'legacy boss victory must grant its breakthrough key');
   assert(migrated.t.tutorial.attacked && migrated.t.tutorial.cultivated, 'legacy progress should complete the tutorial');
   assert.strictEqual(migrated.elements.get('quest').hidden, true, 'completed tutorial should hide guided objectives');
-  assert.strictEqual(JSON.parse(migrated.storage.get('verdant-star-save')).version, 10, 'legacy save should migrate to v10');
+  assert.strictEqual(JSON.parse(migrated.storage.get('verdant-star-save')).version, 11, 'legacy save should migrate to v11');
   assert.strictEqual(migrated.t.treasures.slice(0, 5).filter(cache => cache.opened).length, 5, 'old cache indices must remain intact');
 
   const allBosses = Object.fromEntries(migrated.t.bossDefs.map(boss => [boss.id, true]));

@@ -29,7 +29,13 @@ Progress, equipment, personal-chest contents, learned arts, and keybindings are 
 
 ## Heavenly Tribulations
 
-After defeating all five world bosses and reaching Nascent Soul, speak with Formation Scholar Bo in the sanctuary archive. He opens the Heavenly Scar at Starfall Crater: a repeatable sequence of increasingly dangerous enemy waves followed by an echo boss. Tiers unlock in order, cleared tiers can be replayed, and victories grant persistent Heavenly Marks and Insight. Milestone tiers advance Nascent Soul from stage I through IX; Insight also provides capped solo-world health and damage growth. Leaving the crater or dying fails the active attempt, while refreshing safely reforms its first wave.
+After defeating all five world bosses and reaching Nascent Soul, speak with Formation Scholar Bo in the sanctuary archive. He opens the Heavenly Scar at Starfall Crater: three increasingly dangerous trials of enemy waves and echo bosses. Each first clear tempers three minor stages (I → IV → VII → IX), while cleared tiers remain replayable for Heavenly Marks and Insight. Leaving the crater or dying fails the active attempt, while refreshing safely reforms its first wave.
+
+## Immortal Realm
+
+After clearing all three tribulations, return to Scholar Bo. His Grand Ascension Formation opens a separate floating realm and awakens **Soul Transformation**. Explore the Celestial Ruins, Ember Wastes, and Mirror Mire; fight four new enemy families; read and evade regional sky omens; and ride aether currents that restore qi and instantly refresh Cloud-Step.
+
+Each region contains a multi-wave sky rift. Stabilizing rifts awards Soul Shards and Ascendant Sigils, two sealed rifts awaken Soul Transformation II, and all three summon the Void Harbinger. Repeatable rotating Celestial Decrees reward hunting different enemy types. Completing the rifts, decree, boss, and resource rite at the return formation awakens Soul Transformation III. Higher-realm discovery, rifts, resources, bounties, and transformation progress all save locally.
 
 ## Multiplayer
 
