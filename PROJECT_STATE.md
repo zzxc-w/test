@@ -45,7 +45,7 @@ _Last updated: 2026-09-09. Verify this summary against the current branch, `git 
 
 ## Current state / known issues
 
-- Sanctuary-density, inventory-reliability, and the first Heavenly Tribulation implementation shipped in `0772cb0`. The three-tier redesign and Immortal Realm expansion pass 81 focused system tests, game smoke tests, and multiplayer client tests on `feature/sanctuary-endgame`; live Pages verification remains.
+- Sanctuary-density, inventory-reliability, and the first Heavenly Tribulation implementation shipped in `0772cb0`. The three-tier redesign and Immortal Realm expansion shipped in `76dbeee`; 81 focused system tests, game smoke tests, multiplayer client tests, Pages deployment, and a live browser pass succeeded.
 - Inventory save recovery now preserves valid gear behind malformed entries, repairs duplicate UID equipment assignment, and keeps failed full-bag moves byte-for-byte atomic. The responsive cards show compact type/rarity labels and highlight equipped selection.
 - Tribulation affixes are authored future hooks; playable trials currently apply wave, elite, health, damage, speed, parryability, and echo-boss scaling.
 - Ember Palm is the only active learned art. Gale Step, Flowing Guard, and Iron Root are passive; iron ore has no source.
@@ -67,7 +67,7 @@ _Last updated: 2026-09-09. Verify this summary against the current branch, `git 
 
 ## Next steps
 
-1. Live-browser test all three Tribulations, Scholar Bo ascension, each higher-realm rift, hazard avoidance, bounty rotation, death/re-entry, and final Soul Transformation rite on desktop and touch.
+1. Touch-test all three Tribulations, each higher-realm rift, hazard avoidance, bounty rotation, death/re-entry, and the final Soul Transformation rite on iPad Safari.
 2. Add higher-realm-specific equipment or crafting uses for surplus Soul Shards and Ascendant Sigils.
 3. Implement the authored Tribulation affixes as distinct hazards and add tier-specific equipment rewards.
 4. Design NPC story arcs and stable quest flags before replacing placeholder dialogue/services.
