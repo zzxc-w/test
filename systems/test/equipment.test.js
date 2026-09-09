@@ -147,6 +147,94 @@ test('deserialize repairs duplicate ids, bad placements and invalid equipment sa
   });
 });
 
+test('deserialize recovers valid equipped items that shared a corrupted uid', () => {
+  const restored = Equipment.deserialize({
+    cols: 2,
+    rows: 2,
+    items: [
+      { uid: 'duplicate', itemId: 'wanderer_robes', x: 0, y: 0 },
+      { uid: 'duplicate', itemId: 'sect_iron_sword', x: 1, y: 0 },
+      { uid: 'duplicate', itemId: 'steady_heart_pendant', x: 0, y: 1 }
+    ],
+    equipped: { weapon: 'duplicate', armor: 'duplicate', pendant: 'duplicate' }
+  });
+
+  assert.equal(Equipment.getEquipped(restored, 'weapon').itemId, 'sect_iron_sword');
+  assert.equal(Equipment.getEquipped(restored, 'armor').itemId, 'wanderer_robes');
+  assert.equal(Equipment.getEquipped(restored, 'pendant').itemId, 'steady_heart_pendant');
+  assert.equal(new Set(restored.items.map((item) => item.uid)).size, 3);
+  restored.items.forEach((item) => assert.deepEqual({ x: item.x, y: item.y }, { x: null, y: null }));
+});
+
+test('invalid save entries do not crowd later valid gear out of recovery', () => {
+  const invalid = Array.from({ length: 50 }, (_, index) => ({
+    uid: 'invalid_' + index,
+    itemId: 'removed_item',
+    x: 0,
+    y: 0
+  }));
+  const restored = Equipment.deserialize({
+    cols: 2,
+    rows: 2,
+    items: invalid.concat([{ uid: 'survivor', itemId: 'mountain_cleaver', x: 1, y: 1 }]),
+    equipped: { weapon: 'survivor' }
+  });
+
+  assert.equal(restored.items.length, 1);
+  assert.equal(Equipment.getEquipped(restored, 'weapon').uid, 'survivor');
+});
+
+test('excess valid corruption cannot crowd referenced equipment out of recovery', () => {
+  const overflow = Array.from({ length: 20 }, (_, index) => ({
+    uid: 'overflow_' + index,
+    itemId: 'steady_heart_pendant',
+    x: index % 2,
+    y: Math.floor(index / 2) % 2
+  }));
+  const restored = Equipment.deserialize({
+    cols: 2,
+    rows: 2,
+    items: overflow.concat([{ uid: 'late_weapon', itemId: 'cloudpiercer_spear', x: null, y: null }]),
+    equipped: { weapon: 'late_weapon' }
+  });
+
+  assert.equal(restored.items.length, 5);
+  assert.equal(Equipment.getEquipped(restored, 'weapon').uid, 'late_weapon');
+  assert.equal(Equipment.listBagItems(restored).length, 4);
+});
+
+test('failed full-bag and blocked moves leave inventory byte-for-byte unchanged', () => {
+  const inventory = Equipment.createInventory({ starterItems: ['mountain_cleaver'], cols: 2, rows: 2 });
+  ['sect_iron_sword', 'steady_heart_pendant', 'far_horizon_jade', 'moonstep_charm'].forEach((itemId) => {
+    assert.equal(Equipment.addItem(inventory, itemId).ok, true);
+  });
+  const beforeUnequip = JSON.stringify(inventory);
+  assert.equal(Equipment.unequipItem(inventory, 'weapon').reason, 'inventory-full');
+  assert.equal(JSON.stringify(inventory), beforeUnequip);
+
+  const bag = Equipment.listBagItems(inventory);
+  const beforeMove = JSON.stringify(inventory);
+  assert.equal(Equipment.moveItem(inventory, bag[0].uid, bag[1].x, bag[1].y).reason, 'space-blocked');
+  assert.equal(JSON.stringify(inventory), beforeMove);
+});
+
+test('exact uid removal cannot delete a duplicate definition and equipped drops stay coherent', () => {
+  const inventory = Equipment.createInventory({ starterItems: ['sect_iron_sword'], cols: 2, rows: 2 });
+  const first = Equipment.addItem(inventory, 'moonstep_charm');
+  const second = Equipment.addItem(inventory, { itemId: 'moonstep_charm', uid: first.item.uid });
+  assert.equal(second.ok, true);
+  assert.notEqual(first.item.uid, second.item.uid);
+  assert.equal(Equipment.removeItem(inventory, second.item.uid).item.uid, second.item.uid);
+  assert.equal(Equipment.itemByUid(inventory, first.item.uid).uid, first.item.uid);
+
+  const equipped = Equipment.getEquipped(inventory, 'weapon');
+  const bagCount = Equipment.listBagItems(inventory).length;
+  const dropped = Equipment.removeItem(inventory, equipped.uid, { allowEquipped: true });
+  assert.equal(dropped.ok, true);
+  assert.equal(Equipment.getEquipped(inventory, 'weapon'), null);
+  assert.equal(Equipment.listBagItems(inventory).length, bagCount);
+});
+
 test('missing and malformed old saves receive safe starter equipment', () => {
   [null, '{broken json', { oldSaveVersion: 7 }].forEach((oldSave) => {
     const inventory = Equipment.deserialize(oldSave);

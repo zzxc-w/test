@@ -38,7 +38,9 @@ test("authored sanctuary content is immutable and has unique stable IDs", () => 
 
 test("roster provides every planned placeholder service with distinct skins", () => {
   const required = ["quartermaster", "blacksmith", "movement-tutor", "sword-tutor", "alchemist", "formation-scholar", "healer-caretaker", "storyteller"];
-  assert.deepEqual(SANCTUARY.npcs.map((npc) => npc.service).sort(), required.sort());
+  const services = SANCTUARY.npcs.map((npc) => npc.service);
+  required.forEach((service) => assert.ok(services.includes(service), `${service} remains represented`));
+  assert.ok(SANCTUARY.npcs.length >= 12, "the large sanctuary has a populated resident roster");
   assert.equal(new Set(SANCTUARY.npcs.map((npc) => npc.skin)).size, SANCTUARY.npcs.length);
   SANCTUARY.npcs.forEach((npc) => {
     assert.ok(npc.name && npc.role && npc.dialogue);
@@ -74,6 +76,40 @@ test("entrance reaches every room and every NPC interaction point", () => {
     const adjacent = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => reachable.has(`${npc.x + dx},${npc.y + dy}`));
     assert.equal(adjacent, true, `${npc.id} can be approached`);
   });
+});
+
+test("every zone is intentionally furnished without blocking its navigable floor", () => {
+  SANCTUARY.zones.forEach((zone) => {
+    const decorations = SANCTUARY.decorations.filter((item) => {
+      const centerX = item.x + (item.width || 1) / 2;
+      const centerY = item.y + (item.height || 1) / 2;
+      return centerX >= zone.x && centerX < zone.x + zone.width && centerY >= zone.y && centerY < zone.y + zone.height;
+    });
+    const visualTypes = new Set(decorations.map((item) => item.type));
+    const openTiles = [];
+    for (let y = zone.y; y < zone.y + zone.height; y += 1) {
+      for (let x = zone.x; x < zone.x + zone.width; x += 1) {
+        if (isPassable(SANCTUARY, x, y)) openTiles.push(`${x},${y}`);
+      }
+    }
+    assert.ok(decorations.length >= 8, `${zone.name} has enough authored detail`);
+    assert.ok(visualTypes.size >= 3, `${zone.name} uses varied decoration types`);
+    assert.ok(openTiles.length >= zone.width * zone.height * 0.45, `${zone.name} retains generous walking space`);
+  });
+});
+
+test("training floor and main aisle retain continuous movement lanes", () => {
+  const reachable = reachableTiles(SANCTUARY, SANCTUARY.spawn);
+  for (let y = 18; y <= 32; y += 1) {
+    assert.ok(reachable.has(`23,${y}`), `west aisle tile 23,${y} remains reachable`);
+    assert.ok(reachable.has(`24,${y}`), `east aisle tile 24,${y} remains reachable`);
+  }
+  [
+    { x: 5, y: 21 },
+    { x: 10, y: 28 },
+    { x: 17, y: 24 },
+    { x: 28, y: 25 },
+  ].forEach((point) => assert.ok(reachable.has(`${point.x},${point.y}`), `practice lane ${point.x},${point.y} remains reachable`));
 });
 
 test("personal corner contains healing, infinite storage, rest, and meditation interactions", () => {

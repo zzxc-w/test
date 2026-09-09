@@ -380,18 +380,51 @@
     const state = blankInventory(source.cols, source.rows);
     const used = new Set();
     const requestedEquipment = source.equipped && typeof source.equipped === 'object' ? source.equipped : {};
-    const candidates = source.items.slice(0, state.cols * state.rows * 3).map((candidate) => {
-      if (!candidate || !getDefinition(candidate.itemId)) return null;
-      let uid = cleanUid(candidate.uid);
+    const candidateLimit = state.cols * state.rows + SLOTS.length;
+    const prioritizedIndexes = new Set();
+    SLOTS.forEach((slot) => {
+      const requestedUid = cleanUid(requestedEquipment[slot]);
+      if (!requestedUid) return;
+      const index = source.items.findIndex((candidate, candidateIndex) => (
+        !prioritizedIndexes.has(candidateIndex)
+        && candidate
+        && cleanUid(candidate.uid) === requestedUid
+        && getDefinition(candidate.itemId)?.slot === slot
+      ));
+      if (index >= 0) prioritizedIndexes.add(index);
+    });
+    let ordinarySlots = candidateLimit - prioritizedIndexes.size;
+    const selected = [];
+    source.items.forEach((candidate, index) => {
+      if (!candidate || !getDefinition(candidate.itemId)) return;
+      if (!prioritizedIndexes.has(index)) {
+        if (ordinarySlots <= 0) return;
+        ordinarySlots -= 1;
+      }
+      selected.push({ candidate: candidate, index: index });
+    });
+    selected.sort((left, right) => left.index - right.index);
+
+    const candidates = selected.map(({ candidate }) => {
+      const sourceUid = cleanUid(candidate.uid);
+      let uid = sourceUid;
       if (!uid || used.has(uid)) uid = nextUid(used);
       used.add(uid);
-      return { uid: uid, itemId: candidate.itemId, x: candidate.x, y: candidate.y };
-    }).filter(Boolean);
+      return {
+        item: { uid: uid, itemId: candidate.itemId, x: candidate.x, y: candidate.y },
+        sourceUid: sourceUid
+      };
+    });
 
     SLOTS.forEach((slot) => {
       const requestedUid = cleanUid(requestedEquipment[slot]);
-      const item = requestedUid && candidates.find((candidate) => candidate.uid === requestedUid);
-      if (item && getDefinition(item.itemId).slot === slot && !SLOTS.some((other) => state.equipped[other] === item.uid)) {
+      const record = requestedUid && candidates.find((candidate) => (
+        candidate.sourceUid === requestedUid
+        && getDefinition(candidate.item.itemId).slot === slot
+        && !state.items.includes(candidate.item)
+      ));
+      const item = record && record.item;
+      if (item) {
         item.x = null;
         item.y = null;
         state.items.push(item);
@@ -399,7 +432,8 @@
       }
     });
 
-    candidates.forEach((candidate) => {
+    candidates.forEach((record) => {
+      const candidate = record.item;
       if (state.items.includes(candidate)) return;
       let position = null;
       if (Number.isInteger(candidate.x) && Number.isInteger(candidate.y) && canPlace(state, candidate, candidate.x, candidate.y)) {

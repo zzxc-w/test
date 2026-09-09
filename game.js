@@ -9,7 +9,7 @@
   const WORLD_W = 144, WORLD_H = 108;
   const TAU = Math.PI * 2;
   const SAVE_KEY = 'verdant-star-save';
-  const SAVE_VERSION = 9;
+  const SAVE_VERSION = 10;
   const DASH_DISTANCE = 84;
   const DASH_BASE_COOLDOWN = .72;
   const DASH_MIN_COOLDOWN = .36;
@@ -39,12 +39,15 @@
   const storageApi = globalThis.StorageSystem;
   const sanctuaryApi = globalThis.VerdantSanctuary;
   const skillsApi = globalThis.VerdantSkills;
+  const endgameApi = globalThis.VerdantEndgame;
   const sanctuary = sanctuaryApi.createSanctuary();
   const SANCT_TILE = sanctuary.tileSize;
   const sanctuaryExterior = { x: 52, y: 25, width: 13, height: 10, doorX: 58, doorY: 35 };
   let equipment = equipmentApi.createInventory();
   let keybinds = keybindApi.createKeybinds();
-  let personalStorage = storageApi.createStorage(), skillSystem = null, pendingSkillState = null;
+  let personalStorage = storageApi.createStorage(), skillSystem = null, pendingSkillState = null, endgameSystem = null, pendingEndgameState = null;
+  let tribulationPhase = 0;
+  const tribulationGate = { x: 116.5 * TILE, y: 88.5 * TILE };
   const storyFlags = new Set();
   let multiplayer = null, multiplayerPanel = null, arenaOverlay = null, multiplayerPanelOpen = false;
 
@@ -128,7 +131,7 @@
 
   const realms = [
     { name: 'Mortal', stages: 3, qi: 80 }, { name: 'Qi Condensation', stages: 5, qi: 150 },
-    { name: 'Foundation', stages: 4, qi: 260 }, { name: 'Golden Core', stages: 3, qi: 420 }, { name: 'Nascent Soul', stages: 1, qi: 9999 }
+    { name: 'Foundation', stages: 4, qi: 260 }, { name: 'Golden Core', stages: 3, qi: 420 }, { name: 'Nascent Soul', stages: 9, qi: 640 }
   ];
 
   const player = {
@@ -440,12 +443,31 @@
     });
   }
 
+  function configureEndgameSystem(savedState) {
+    endgameSystem = endgameApi.createEndgameSystem({
+      state: savedState,
+      resources: {
+        get: id => id === 'spiritStones' ? player.stones : 0,
+        spend: (id, amount) => { if (id !== 'spiritStones' || player.stones < amount) return false; player.stones -= amount; return true; },
+        credit: (id, amount) => { if (id === 'spiritStones') player.stones += amount; }
+      },
+      progression: {
+        getRealm: () => realms[player.realm].name,
+        getStage: () => player.stage,
+        hasDefeatedBoss: id => !!bossStates[id]
+      }
+    });
+  }
+
   function derivedCombatStats() {
     const stats = equipmentApi.deriveStats(equipment);
     for (const effect of skillSystem?.passiveEffects() || []) {
       for (const key of ['damageMultiplier','attackCooldownMultiplier','dashCooldownMultiplier','moveSpeedMultiplier','parryWindowMultiplier','qiGainMultiplier']) if (Number.isFinite(effect[key])) stats[key] *= effect[key];
       for (const key of ['reachBonus','maxHpBonus','defense','lootChanceBonus','attackArcBonus']) if (Number.isFinite(effect[key])) stats[key] += effect[key];
     }
+    const heavenlyInsight = endgameSystem?.serialize().heavenlyInsight || 0;
+    stats.damageMultiplier *= 1 + Math.min(.3, heavenlyInsight * .0025);
+    stats.maxHpBonus += Math.min(60, Math.floor(heavenlyInsight / 4));
     stats.defense = clamp(stats.defense, 0, .65); stats.dashCooldownMultiplier = Math.max(.45, stats.dashCooldownMultiplier);
     return stats;
   }
@@ -507,6 +529,7 @@
         ingredients: { ...player.ingredients }, keyItems: [...player.keyItems], tutorial: { ...tutorial }, bosses: { ...bossStates },
         equipment: equipmentApi.serialize(equipment), keybinds: keybinds.snapshot(),
         personalStorage: storageApi.serialize(personalStorage), skills: skillSystem?.serialize() || { version: 1, learned: [] },
+        endgame: endgameSystem?.serialize() || endgameApi.deserialize(),
         storyFlags: [...storyFlags], location: currentScene, worldReturnPosition: { ...worldReturnPosition },
         resourceReadyAt: Object.fromEntries(resourceNodes.filter(n => !n.ready).map(n => [n.id, Date.now() + Math.max(0, n.respawn) * 1000])),
         bossDefeated: bossStates.sectbreaker
@@ -550,13 +573,20 @@
       keybinds = keybindApi.createKeybinds(d.keybinds);
       personalStorage = storageApi.deserialize(d.personalStorage);
       pendingSkillState = skillsApi.deserialize(d.skills);
+      pendingEndgameState = endgameApi.deserialize(d.endgame);
       if (Array.isArray(d.storyFlags)) d.storyFlags.filter(flag => typeof flag === 'string' && /^[a-z0-9_]{1,48}$/.test(flag)).forEach(flag => storyFlags.add(flag));
       configureSkillSystem(pendingSkillState);
+      configureEndgameSystem(pendingEndgameState);
       currentScene = d.location === 'sanctuary' ? 'sanctuary' : 'world';
       if (d.worldReturnPosition && Number.isFinite(d.worldReturnPosition.x) && Number.isFinite(d.worldReturnPosition.y)) worldReturnPosition = { x: d.worldReturnPosition.x, y: d.worldReturnPosition.y };
       // Defeat flags are authoritative. Repair missing durable keys in legacy or
       // partially-written saves so a completed boss can never softlock progress.
       for (const boss of bossDefs) if (bossStates[boss.id]) player.keyItems.add(boss.keyItem);
+      if (loadedSaveVersion < 10 && player.realm === 4) {
+        player.stage = 1;
+        player.maxQi = qiCapacity(4, 1);
+        player.qi = Math.min(player.qi, player.maxQi);
+      }
       // Old or partially-written saves must never create an unbounded level-up loop.
       player.xpNeed = clamp(Math.floor(player.xpNeed) || 60, 20, 1000000);
       player.xp = clamp(Math.floor(player.xp) || 0, 0, player.xpNeed * 10);
@@ -663,6 +693,12 @@
 
   function breakthrough(force = false) {
     if (player.realm === realms.length - 1 && player.stage === realms[player.realm].stages) { addMessage('Your path reaches beyond the current heavens.'); return false; }
+    if (!force && realms[player.realm].name === 'Nascent Soul') {
+      const progress = endgameSystem.progress();
+      addMessage(`Nascent Souls advance through the Heavenly Scar. Clear tribulation tier ${progress.nextStageAtTier || progress.bestTier + 1}.`, 'bad');
+      addMessage('Seek Scholar Bo in the sanctuary archive.');
+      return false;
+    }
     const requirement = currentBreakthroughRequirement(), missing = force ? [] : missingRequirements(requirement);
     if (!force && player.qi < player.maxQi) { addMessage('Your qi must be full before a breakthrough.', 'bad'); return false; }
     if (missing.length) {
@@ -778,6 +814,12 @@
   function killEnemy(e) {
     e.alive = false; e.respawn = e.boss ? 999999 : 18 + hash(player.kills, 9) * 18; player.kills++;
     const t = enemyTypes[e.type]; gainXp(t.xp);
+    if (e.tribulation) {
+      burst(e.x, e.y, e.elite ? '#d6b5ff' : '#91c9ff', e.elite ? 26 : 14, 120);
+      addMessage(`${e.title || t.name} dissolves into heavenly qi.`, 'good');
+      advanceTribulationIfCleared();
+      return;
+    }
     if (hash(player.kills, Math.floor(playTime), 12) > .43) pickups.push({ x: e.x, y: e.y, type: 'stone', life: 24, bob: hash(e.x|0,e.y|0)*TAU });
     const bossGear = { jadehorn: 'steady_heart_pendant', tempest_crane: 'cloudpiercer_spear', mirecoil_matriarch: 'moonshadow_garb', sectbreaker: 'mountain_cleaver', starfallen_warden: 'earthpulse_medallion' };
     const dropPools = {
@@ -800,6 +842,112 @@
       reconcileQuestProgress(); save();
     }
     reconcileQuestProgress();
+  }
+
+  function allBossesDefeated() { return Object.values(bossStates).every(Boolean); }
+
+  function clearTribulationEnemies() {
+    enemies = enemies.filter(enemy => !enemy.tribulation);
+  }
+
+  function openPointNear(cx, cy, angle, radius) {
+    const targetX = cx + Math.cos(angle) * radius, targetY = cy + Math.sin(angle) * radius;
+    for (let ring = 0; ring <= 5; ring++) for (let step = 0; step < 8; step++) {
+      const a = angle + step / 8 * TAU, x = targetX + Math.cos(a) * ring * TILE, y = targetY + Math.sin(a) * ring * TILE;
+      if (passableAt(x, y, 14)) return { x, y };
+    }
+    return { x: tribulationGate.x, y: tribulationGate.y };
+  }
+
+  function makeTribulationEnemy(type, index, count, wave, elite, modifiers) {
+    const base = enemyTypes[type], angle = index / Math.max(1, count) * TAU + wave * .71;
+    const point = openPointNear(tribulationGate.x, tribulationGate.y, angle, (4.5 + (index % 3)) * TILE);
+    const eliteScale = elite ? 1.65 : 1;
+    return {
+      ...point, type, hp: Math.round(base.hp * modifiers.hpMultiplier * eliteScale), maxHp: Math.round(base.hp * modifiers.hpMultiplier * eliteScale),
+      vx: 0, vy: 0, hit: 0, attackCd: .7 + index * .08, wander: angle, alive: true,
+      attackState: 'idle', attackTimer: 0, attackAngle: 0, attackLanded: false, stagger: 0, riposteWindow: 0,
+      tribulation: true, elite, speedMultiplier: modifiers.speedMultiplier,
+      title: elite ? `Heavenly Elite · Wave ${wave + 1}` : '', respawn: 999999,
+      profile: { damage: Math.round(base.damage * modifiers.damageMultiplier * (elite ? 1.3 : 1)), windup: Math.max(.2, base.windup / modifiers.speedMultiplier), range: base.range, recovery: Math.max(.45, base.recovery / modifiers.speedMultiplier), kind: base.kind, parryable: !elite }
+    };
+  }
+
+  function spawnTribulationPhase() {
+    const active = endgameSystem.active();
+    if (!active) return;
+    clearTribulationEnemies();
+    const trial = active.trial;
+    if (tribulationPhase < trial.waves.length) {
+      const wave = trial.waves[tribulationPhase], types = ['wolf','wisp','serpent','guardian','rogue'];
+      for (let i = 0; i < wave.enemyCount; i++) {
+        const elite = i < wave.eliteCount;
+        enemies.push(makeTribulationEnemy(types[(i + tribulationPhase + active.tier) % types.length], i, wave.enemyCount, tribulationPhase, elite, wave));
+      }
+      addMessage(`Tribulation tier ${active.tier} · wave ${tribulationPhase + 1}/${trial.waves.length}.`, 'bad');
+      return;
+    }
+    const type = active.tier % 2 ? 'rogue' : 'guardian', base = enemyTypes[type], boss = trial.boss;
+    const point = openPointNear(tribulationGate.x, tribulationGate.y, -Math.PI / 2, 5 * TILE);
+    const hp = Math.round((420 + active.tier * 85) * boss.hpMultiplier);
+    enemies.push({
+      ...point, type, hp, maxHp: hp, vx: 0, vy: 0, hit: 0, attackCd: 1, wander: 0, alive: true,
+      attackState: 'idle', attackTimer: 0, attackAngle: 0, attackLanded: false, stagger: 0, riposteWindow: 0,
+      tribulation: true, elite: true, speedMultiplier: boss.speedMultiplier, title: `Echo of the Heavens · Tier ${active.tier}`, respawn: 999999,
+      profile: { damage: Math.round(base.damage * boss.damageMultiplier * 2.2), windup: Math.max(.3, base.windup / boss.speedMultiplier), range: base.range + 14, recovery: Math.max(.55, base.recovery / boss.speedMultiplier), kind: active.tier % 3 === 0 ? 'slam' : base.kind, parryable: active.tier % 3 !== 0 }
+    });
+    addMessage(`The Echo of the Heavens descends.`, 'bad');
+  }
+
+  function startTribulation(tier = (endgameSystem?.serialize().bestTier || 0) + 1) {
+    const report = endgameSystem.begin(tier, { player });
+    if (!report.ok) {
+      const missingStones = report.missing?.find(check => check.id === 'spiritStones');
+      const reason = report.code === 'trial_active' ? 'A heavenly tribulation is already unfolding.'
+        : !allBossesDefeated() ? 'Five fallen sovereigns must open the Heavenly Scar.'
+        : realms[player.realm].name !== 'Nascent Soul' ? 'Only a Nascent Soul can survive the Heavenly Scar.'
+        : missingStones ? `Tier ${tier} requires ${missingStones.amount} spirit stones.`
+        : 'That tribulation tier remains sealed.';
+      addMessage(reason, 'bad'); return false;
+    }
+    if (activeMenu) closeMenu();
+    currentScene = 'world'; mapOpen = false; safeTeleport(116, 92); tribulationPhase = 0;
+    player.hp = effectiveMaxHp(); player.qi = player.maxQi; player.invuln = 2;
+    spawnTribulationPhase(); save(); updateUI(); return true;
+  }
+
+  function completeTribulation() {
+    const active = endgameSystem.active(); if (!active) return;
+    const result = endgameSystem.complete(active.attemptId); clearTribulationEnemies();
+    if (!result.ok) return;
+    if (player.realm === 4 && result.nascentStage > player.stage) {
+      const advances = result.nascentStage - player.stage; player.stage = result.nascentStage;
+      player.maxHp += advances * 18; player.attack += advances * 5; player.maxQi = qiCapacity();
+      addMessage(`Your Nascent Soul awakens to stage ${roman(player.stage)}.`, 'good'); flash = 1;
+    }
+    player.stones += 10 + result.tier * 3; player.hp = effectiveMaxHp(); player.qi = player.maxQi;
+    burst(player.x, player.y, '#d9b8ff', 42, 155);
+    addMessage(`Tribulation tier ${result.tier} cleared · +${result.rewards.heavenlyMarks} marks, +${result.rewards.heavenlyInsight} insight.`, 'good');
+    save(); updateUI();
+  }
+
+  function failTribulation(message) {
+    const active = endgameSystem?.active(); if (!active) return false;
+    endgameSystem.fail(active.attemptId); clearTribulationEnemies(); tribulationPhase = 0;
+    if (message) addMessage(message, 'bad'); save(); return true;
+  }
+
+  function advanceTribulationIfCleared() {
+    const active = endgameSystem?.active(); if (!active || enemies.some(enemy => enemy.tribulation && enemy.alive)) return;
+    if (tribulationPhase < active.trial.waves.length) { tribulationPhase++; spawnTribulationPhase(); }
+    else completeTribulation();
+  }
+
+  function resumeTribulation() {
+    const active = endgameSystem?.active(); if (!active) return;
+    if (!allBossesDefeated() || realms[player.realm].name !== 'Nascent Soul') { failTribulation(); return; }
+    currentScene = 'world'; safeTeleport(116, 92); tribulationPhase = 0; spawnTribulationPhase();
+    addMessage(`The unfinished tier ${active.tier} tribulation reforms.`, 'bad');
   }
 
   function gather() {
@@ -880,6 +1028,23 @@
       const heal = document.createElement('button'); heal.type = 'button'; heal.textContent = 'Ask about the Moonwater Well';
       heal.addEventListener('click', () => { addMessage('Yao gestures toward the well in your private corner. Its water restores body and qi.'); closeMenu(); }); ui.dialogueChoices.append(heal);
     }
+    if (activeNpc.service === 'formation-scholar') {
+      const state = endgameSystem.serialize(), nextTier = state.bestTier + 1, trial = endgameApi.trialConfig(nextTier);
+      const challenge = document.createElement('button'); challenge.type = 'button';
+      challenge.textContent = allBossesDefeated() && realms[player.realm].name === 'Nascent Soul'
+        ? `Enter Heavenly Tribulation · tier ${nextTier} · ${trial.entryCosts.map(cost => `${cost.amount} ${cost.type === 'heavenlyMarks' ? 'marks' : 'stones'}`).join(' + ')}`
+        : 'Ask about the sealed Heavenly Scar';
+      challenge.addEventListener('click', () => {
+        if (!allBossesDefeated()) { addMessage('Bo names five sovereign foes. Their deaths will unseal the scar above Starfall Crater.'); closeMenu(); return; }
+        if (realms[player.realm].name !== 'Nascent Soul') { addMessage('Bo warns that only a Nascent Soul can enter the completed formation.'); closeMenu(); return; }
+        startTribulation(nextTier);
+      });
+      ui.dialogueChoices.append(challenge);
+      if (state.bestTier > 0) {
+        const replay = document.createElement('button'); replay.type = 'button'; replay.textContent = `Replay cleared tribulation · tier ${state.bestTier}`;
+        replay.addEventListener('click', () => startTribulation(state.bestTier)); ui.dialogueChoices.append(replay);
+      }
+    }
     const leave = document.createElement('button'); leave.type = 'button'; leave.textContent = 'Leave'; leave.addEventListener('click', closeMenu); ui.dialogueChoices.append(leave);
   }
 
@@ -900,12 +1065,13 @@
 
   function interact() {
     if (currentScene === 'sanctuary') { interactSanctuary(); return; }
-    const door = { x: (sanctuaryExterior.doorX + .5) * TILE, y: (sanctuaryExterior.doorY + .5) * TILE };
-    if (dist(player, door) < 52) { enterSanctuary(); return; }
     const localGear = pickups.filter(p => p.type === 'gear' && dist(player, p) < 52).sort((a, b) => dist(player, a) - dist(player, b))[0];
     if (localGear) { collectGroundGear(localGear); return; }
     const shared = multiplayer?.status === 'online' ? multiplayer.drops.nearby(player.x, player.y, 52, Date.now()).find(drop => !claimingDropIds.has(drop.id)) : null;
     if (shared) { claimSharedDrop(shared); return; }
+    const door = { x: (sanctuaryExterior.doorX + .5) * TILE, y: (sanctuaryExterior.doorY + .5) * TILE };
+    if (dist(player, door) < 52) { enterSanctuary(); return; }
+    if (allBossesDefeated() && dist(player, tribulationGate) < 62) { startTribulation(); return; }
     gather();
   }
 
@@ -965,6 +1131,10 @@
   function dropSelectedItem() {
     const item = equipmentApi.itemByUid(equipment, selectedItemUid);
     if (!item || [...pendingSharedDrops.values()].includes(item.uid)) return;
+    if (currentScene !== 'world') {
+      addMessage('Equipment can only be dropped in the outside world. Use your spirit chest here.', 'bad');
+      return;
+    }
     const definition = equipmentApi.getDefinition(item.itemId);
     if (multiplayer?.status === 'online') {
       const requestId = multiplayer.createDrop(item.itemId);
@@ -973,8 +1143,9 @@
     }
     const removed = equipmentApi.removeItem(equipment, item.uid, { allowEquipped: true });
     if (!removed.ok) return;
-    const x = clamp(player.x + Math.cos(player.facing) * 28, player.r, WORLD_W * TILE - player.r);
-    const y = clamp(player.y + Math.sin(player.facing) * 28, player.r, WORLD_H * TILE - player.r);
+    let x = clamp(player.x + Math.cos(player.facing) * 28, player.r, WORLD_W * TILE - player.r);
+    let y = clamp(player.y + Math.sin(player.facing) * 28, player.r, WORLD_H * TILE - player.r);
+    if (!passableAt(x, y, 5)) { x = player.x; y = player.y; }
     spawnLocalGear(removed.item.itemId, x, y); selectedItemUid = null; player.hp = Math.min(player.hp, effectiveMaxHp());
     addMessage(`Dropped ${definition.name}.`, 'good'); save(); renderInventory(); updateUI();
   }
@@ -1104,6 +1275,7 @@
   }
 
   function handlePlayerDeath() {
+    failTribulation('The Heavenly Scar rejects your wounded soul. The trial is lost.');
     const oldQi = player.qi, lostStage = loseCultivationStage();
     player.qi = Math.min(player.maxQi, Math.floor(oldQi * .75));
     currentScene = 'world'; player.hp = effectiveMaxHp(); player.x = 47.5 * TILE; player.y = 39 * TILE;
@@ -1184,6 +1356,7 @@
     for (const e of enemies) {
       const t = enemyTypes[e.type];
       if (!e.alive) {
+        if (e.tribulation) continue;
         if (e.boss && bossStates[e.bossId]) continue;
         e.respawn -= dt;
         if (e.respawn <= 0) { const p = randomOpen((player.kills + Math.floor(playTime)) * 7 + enemies.indexOf(e)); Object.assign(e, p, { hp: t.hp, alive: true, attackState: 'idle', attackTimer: 0, attackLanded: false, stagger: 0, riposteWindow: 0 }); }
@@ -1196,7 +1369,7 @@
       let a;
       if (d < 190) a = Math.atan2(player.y - e.y, player.x - e.x);
       else { e.wander += (hash(Math.floor(playTime / 2), enemies.indexOf(e), 3) - .5) * .12; a = e.wander; }
-      const speed = t.speed * (d < 190 ? 1 : .28);
+      const speed = t.speed * (e.speedMultiplier || 1) * (d < 190 ? 1 : .28);
       moveEntity(e, Math.cos(a) * speed * dt, Math.sin(a) * speed * dt, t.r);
       if (dist(player, e) < profile.range + player.r && e.attackCd <= 0) startEnemyAttack(e, profile);
     }
@@ -1205,6 +1378,7 @@
     for (const node of resourceNodes) if (!node.ready) { node.respawn -= dt; if (node.respawn <= 0) node.ready = true; }
     for (const p of pickups) { p.life -= dt; if (p.type === 'stone' && dist(player, p) < 21) { p.life = 0; player.stones++; player.qi = Math.min(player.maxQi, player.qi + 4); addMessage('Absorbed a spirit stone.', 'good'); } }
     pickups = pickups.filter(p => p.life > 0);
+    if (endgameSystem?.active() && dist(player, tribulationGate) > 720) failTribulation('You leave the Heavenly Scar. The unfinished trial collapses.');
     for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= .94; p.vy *= .94; p.life -= dt; }
     particles = particles.filter(p => p.life > 0); slashes.forEach(s => s.life -= dt); slashes = slashes.filter(s => s.life > 0);
     messages.forEach(m => m.life -= dt); const ml = messages.length; messages = messages.filter(m => m.life > 0); if (ml !== messages.length) renderMessages();
@@ -1268,6 +1442,7 @@
     }
     const nearLocalGear = pickups.find(p => p.type === 'gear' && dist(player, p) < 52);
     const nearSharedGear = multiplayer?.status === 'online' && multiplayer.drops.nearby(player.x, player.y, 52, Date.now()).find(drop => !claimingDropIds.has(drop.id));
+    const nearTribulationGate = allBossesDefeated() && dist(player, tribulationGate) < 62;
     const sanctuaryDoor = { x: (sanctuaryExterior.doorX + .5) * TILE, y: (sanctuaryExterior.doorY + .5) * TILE };
     const nearSanctuaryDoor = dist(player, sanctuaryDoor) < 52;
     const nearbyChest = treasures.find(t => !t.opened && dist(player, t) < 58);
@@ -1276,6 +1451,10 @@
     let prompt = '';
     if (nearLocalGear || nearSharedGear) prompt = `${bindingLabel('interact')} \u00b7 Pick up ${equipmentApi.getDefinition((nearLocalGear || nearSharedGear).itemId)?.name || 'equipment'}`;
     else if (nearSanctuaryDoor) prompt = `${bindingLabel('interact')} \u00b7 Enter ${sanctuary.name}`;
+    else if (nearTribulationGate) {
+      const active = endgameSystem.active(), tier = active?.tier || endgameSystem.serialize().bestTier + 1;
+      prompt = active ? `Heavenly Tribulation \u00b7 tier ${tier} \u00b7 phase ${tribulationPhase + 1}` : `${bindingLabel('interact')} \u00b7 Begin Heavenly Tribulation tier ${tier}`;
+    }
     else if (nearbyChest) prompt = `${bindingLabel('interact')} \u00b7 Open ancient cache`;
     else if (nearbyNode) prompt = `${bindingLabel('interact')} \u00b7 Gather ${itemDefs[nearbyNode.item].name}`;
     else if (nearbyHerb) prompt = `${bindingLabel('interact')} \u00b7 Gather glowing moonleaf`;
@@ -1284,7 +1463,7 @@
     ui.interactPrompt.classList.toggle('show', !!prompt);
   }
 
-  function roman(n) { return ['I','II','III','IV','V'][n - 1] || String(n); }
+  function roman(n) { return ['I','II','III','IV','V','VI','VII','VIII','IX'][n - 1] || String(n); }
 
   function screenPos(x, y, cam) { return { x: Math.round(x - cam.x), y: Math.round(y - cam.y) }; }
   function drawTile(type, sx, sy, tx, ty, time) {
@@ -1362,6 +1541,20 @@
     ctx.fillStyle = '#f2dda0'; ctx.font = 'bold 13px Georgia'; ctx.textAlign = 'center'; ctx.fillText('VERDANT STAR SANCTUARY', x + w / 2, y + 70);
   }
 
+  function drawTribulationGate(cam, time) {
+    if (!allBossesDefeated()) return;
+    const s = screenPos(tribulationGate.x, tribulationGate.y, cam), active = endgameSystem?.active();
+    if (s.x < -80 || s.y < -80 || s.x > W + 80 || s.y > H + 80) return;
+    const pulse = .5 + Math.sin(time * 3.5) * .18;
+    ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(time * .18);
+    ctx.globalAlpha = .16 + pulse * .12; ctx.fillStyle = '#b77cff'; ctx.beginPath(); ctx.arc(0, 0, 48 + pulse * 8, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1; ctx.strokeStyle = active ? '#f0c5ff' : '#ad83e6'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0, 0, 31, 0, TAU); ctx.stroke();
+    for (let i = 0; i < 8; i++) { ctx.rotate(TAU / 8); ctx.fillStyle = i % 2 ? '#84c9ff' : '#d8aaff'; ctx.fillRect(25, -3, 13, 6); }
+    ctx.restore();
+    ctx.fillStyle = '#e8d1ff'; ctx.font = 'bold 12px Georgia'; ctx.textAlign = 'center'; ctx.fillText(active ? `TRIBULATION · TIER ${active.tier}` : 'HEAVENLY SCAR', s.x, s.y - 48);
+  }
+
   function drawSanctuaryDecoration(item, cam, time) {
     const x = item.x * SANCT_TILE - cam.x, y = item.y * SANCT_TILE - cam.y, w = (item.width || 1) * SANCT_TILE, h = (item.height || 1) * SANCT_TILE;
     if (item.type === 'rug') { ctx.fillStyle = item.id === 'personal-rug' ? '#334c53' : '#643c47'; ctx.fillRect(x + 3, y + 3, w - 6, h - 6); ctx.strokeStyle = '#d1a95e'; ctx.strokeRect(x + 7, y + 7, w - 14, h - 14); }
@@ -1381,7 +1574,7 @@
 
   function drawSanctuaryNpc(npc, cam, time) {
     const x = npc.x * SANCT_TILE - cam.x + SANCT_TILE / 2, y = npc.y * SANCT_TILE - cam.y + SANCT_TILE / 2, bob = Math.sin(time * 2 + npc.x) > .82 ? 1 : 0;
-    const skinColors = { warm: '#d2ad83', umber: '#8e6047', golden: '#d7b06e', light: '#e0c09f', olive: '#aa9468', deep: '#714b3d', bronze: '#ad7452', weathered: '#b28c6d' };
+    const skinColors = { warm: '#d2ad83', umber: '#8e6047', golden: '#d7b06e', light: '#e0c09f', olive: '#aa9468', deep: '#714b3d', bronze: '#ad7452', weathered: '#b28c6d', willow: '#c79a72', copper: '#a96f4e', rose: '#d5a08f', sunlit: '#deb477' };
     ctx.fillStyle = '#0007'; ctx.fillRect(x - 10, y + 10, 20, 5); ctx.fillStyle = npc.palette.robe; ctx.fillRect(x - 8, y - 5 + bob, 16, 18);
     ctx.fillStyle = skinColors[npc.skin] || '#caa47d'; ctx.fillRect(x - 5, y - 13 + bob, 10, 9); ctx.fillStyle = npc.palette.hair; ctx.fillRect(x - 7, y - 16 + bob, 14, 5);
     ctx.fillStyle = npc.palette.trim; ctx.fillRect(x - 1, y - 4 + bob, 3, 12);
@@ -1477,7 +1670,7 @@
       ctx.stroke();
     }
     if (e.hp < e.maxHp) { ctx.fillStyle = '#1a1719'; ctx.fillRect(s.x - 14, s.y - t.r - 10, 28, 3); ctx.fillStyle = '#d55c55'; ctx.fillRect(s.x - 14, s.y - t.r - 10, 28 * e.hp / e.maxHp, 3); }
-    if (e.boss && (dist(player, e) < 230 || e.hp < e.maxHp)) { ctx.fillStyle = '#f0c96f'; ctx.font = '12px Georgia'; ctx.textAlign = 'center'; ctx.fillText(e.title, s.x, s.y - t.r - 17); }
+    if ((e.boss || e.elite) && (dist(player, e) < 260 || e.hp < e.maxHp)) { ctx.fillStyle = e.tribulation ? '#dabaff' : '#f0c96f'; ctx.font = '12px Georgia'; ctx.textAlign = 'center'; ctx.fillText(e.title, s.x, s.y - t.r - 17); }
   }
 
   function drawEquippedWeapon(s, style) {
@@ -1552,6 +1745,11 @@
       ctx.strokeStyle = known ? '#f4d47f' : '#939aa4'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(ax, ay, 5, 0, TAU); ctx.stroke();
       if (mapOpen && known) { ctx.fillStyle = '#fff0bc'; ctx.font = '11px Georgia'; ctx.textAlign = 'left'; ctx.fillText(a.name, ax + 7, ay + 4); }
     }
+    if (allBossesDefeated()) {
+      const gx = x0 + tribulationGate.x / (WORLD_W * TILE) * mw, gy = mapY + tribulationGate.y / (WORLD_H * TILE) * mapH;
+      ctx.fillStyle = '#d6a6ff'; ctx.beginPath(); ctx.moveTo(gx, gy - 6); ctx.lineTo(gx + 5, gy); ctx.lineTo(gx, gy + 6); ctx.lineTo(gx - 5, gy); ctx.closePath(); ctx.fill();
+      if (mapOpen) { ctx.fillStyle = '#ead7ff'; ctx.font = '11px Georgia'; ctx.textAlign = 'right'; ctx.fillText('Heavenly Scar', gx - 8, gy + 4); }
+    }
     ctx.fillStyle = '#fff3b0'; ctx.beginPath(); ctx.arc(x0 + player.x / (WORLD_W * TILE) * mw, mapY + player.y / (WORLD_H * TILE) * mapH, 3.5, 0, TAU); ctx.fill();
     ctx.lineWidth = 1; ctx.strokeStyle = '#ffffff55'; ctx.strokeRect(x0 + cam.x / (WORLD_W * TILE) * mw, mapY + cam.y / (WORLD_H * TILE) * mapH, W / (WORLD_W * TILE) * mw, H / (WORLD_H * TILE) * mapH);
   }
@@ -1593,6 +1791,7 @@
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (x >= 0 && y >= 0 && x < WORLD_W && y < WORLD_H) drawTile(map[y][x], x * TILE - cam.x, y * TILE - cam.y, x, y, time);
     drawLandmarks(cam, time);
     drawSanctuaryExterior(cam, time);
+    drawTribulationGate(cam, time);
     plants.forEach(p => drawPlant(p, cam, time));
     resourceNodes.forEach(node => drawResourceNode(node, cam, time));
     pickups.forEach(p => { const s = screenPos(p.x, p.y, cam), b = Math.sin(time * 5 + p.bob) * 3; ctx.fillStyle = '#07110eaa'; ctx.fillRect(s.x - 6, s.y + 6, 12, 3); if (p.type === 'gear') { ctx.fillStyle = '#d2ab58'; ctx.fillRect(s.x - 5, s.y - 6 + b, 10, 11); ctx.fillStyle = '#fff0aa'; ctx.fillRect(s.x - 2, s.y - 8 + b, 4, 4); } else { ctx.fillStyle = '#79e1b7'; ctx.fillRect(s.x - 4, s.y - 5 + b, 8, 9); ctx.fillStyle = '#c8ffe9'; ctx.fillRect(s.x - 1, s.y - 3 + b, 3, 4); } });
@@ -1619,12 +1818,16 @@
     const materials = Object.entries(player.ingredients).map(([id, count]) => `${itemDefs[id].name}: ${count}`);
     const keysOwned = [...player.keyItems].map(id => itemDefs[id]?.name).filter(Boolean);
     const requirement = currentBreakthroughRequirement(), missing = missingRequirements(requirement);
+    const heavenly = endgameSystem?.serialize(), heavenlyProgress = endgameSystem?.progress();
     ui.inventoryText.textContent = [
       `Moonleaf herbs: ${player.herbs} | Spirit stones: ${player.stones}`,
       ...materials,
       `Key items: ${keysOwned.length ? keysOwned.join(', ') : 'None'}`,
       `Learned arts: ${skillSystem?.learnedSkills().map(skill => skill.name).join(', ') || 'None'}`,
-      player.realm === realms.length - 1 ? 'Current path complete.' : `Next breakthrough: ${missing.length ? missing.join(', ') : 'Requirements met; fill qi and cultivate.'}`
+      `Heavenly path: tier ${heavenly?.bestTier || 0} · ${heavenly?.heavenlyMarks || 0} marks · ${heavenly?.heavenlyInsight || 0} insight`,
+      realms[player.realm].name === 'Nascent Soul'
+        ? (heavenlyProgress?.nextStage ? `Nascent Soul ${roman(heavenlyProgress.nextStage)} awakens at tribulation tier ${heavenlyProgress.nextStageAtTier}.` : 'Nascent Soul IX has reached the current summit; tribulations remain replayable.')
+        : `Next breakthrough: ${missing.length ? missing.join(', ') : 'Requirements met; fill qi and cultivate.'}`
     ].join('\n');
   }
 
@@ -1647,7 +1850,7 @@
     ui.equipmentSlots.replaceChildren();
     for (const slot of equipmentApi.SLOTS) {
       const item = equipped[slot], definition = item && equipmentApi.getDefinition(item.itemId), button = document.createElement('button');
-      button.type = 'button'; button.className = 'equipment-slot'; button.dataset.slot = slot;
+      button.type = 'button'; button.className = `equipment-slot${item && selectedItemUid === item.uid ? ' selected' : ''}`; button.dataset.slot = slot;
       const strong = document.createElement('strong'), small = document.createElement('small'); strong.textContent = `${slot[0].toUpperCase()}${slot.slice(1)} · ${definition ? definition.name : 'Empty'}`; small.textContent = definition ? itemSummary(definition) : 'Select a matching item from your backpack.';
       button.append(strong, small); button.addEventListener('click', () => { selectedItemUid = item?.uid || null; renderInventory(); }); ui.equipmentSlots.append(button);
     }
@@ -1658,16 +1861,18 @@
       if (!item) { const empty = document.createElement('div'); empty.className = 'bag-slot empty'; empty.setAttribute('aria-hidden', 'true'); ui.bagGrid.append(empty); continue; }
       const definition = equipmentApi.getDefinition(item.itemId), button = document.createElement('button');
       button.type = 'button'; button.className = `bag-slot${selectedItemUid === item.uid ? ' selected' : ''}`; button.dataset.rarity = definition.rarity;
-      const strong = document.createElement('strong'), small = document.createElement('small'); strong.textContent = definition.name; small.textContent = itemSummary(definition); button.append(strong, small);
+      button.dataset.slot = definition.slot;
+      const strong = document.createElement('strong'), small = document.createElement('small'); strong.textContent = definition.name; small.textContent = `${definition.slot} · ${definition.rarity}`; button.append(strong, small);
       button.addEventListener('click', () => { selectedItemUid = item.uid; renderInventory(); }); ui.bagGrid.append(button);
     }
     const selected = equipmentApi.itemByUid(equipment, selectedItemUid), definition = selected && equipmentApi.getDefinition(selected.itemId);
-    ui.bagCount.textContent = `(${bag.length} carried · ${equipment.cols}×${equipment.rows} grid)`;
+    ui.bagCount.textContent = `(${bag.length} / ${equipment.cols * equipment.rows} slots)`;
     ui.itemDetail.textContent = definition ? `${definition.name} · ${definition.rarity}\n${itemSummary(definition)}` : 'Select an item to inspect it.';
     const pending = selected && [...pendingSharedDrops.values()].includes(selected.uid);
     ui.equipItem.disabled = !selected || pending || Object.values(equipment.equipped).includes(selected.uid);
     ui.unequipItem.disabled = !selected || pending || !Object.values(equipment.equipped).includes(selected.uid);
-    ui.dropItem.disabled = !selected || pending;
+    ui.dropItem.disabled = !selected || pending || currentScene !== 'world';
+    ui.dropItem.textContent = currentScene === 'world' ? 'Drop' : 'Drop · outside only';
     ui.equipmentStats.textContent = `Damage: ${Math.round(stats.damageMultiplier * 100)}% · Defence: ${Math.round(stats.defense * 100)}%\nHealth bonus: +${stats.maxHpBonus} · Reach: ${38 + stats.reachBonus}\nMove speed: ${Math.round(stats.moveSpeedMultiplier * 100)}% · Attack speed: ${Math.round(100 / stats.attackCooldownMultiplier)}%\nParry window: ${Math.round(stats.parryWindowMultiplier * 100)}% · Dash recovery: ${Math.round(100 / stats.dashCooldownMultiplier)}%`;
   }
 
@@ -1721,6 +1926,7 @@
       `Realm: ${realms[player.realm].name} ${roman(player.stage)} | Tutorial: attack ${tutorial.attacked}, cultivate ${tutorial.cultivated}`,
       `HP: ${Math.ceil(player.hp)} / ${effectiveMaxHp()} | Qi: ${Math.floor(player.qi)} / ${player.maxQi}`,
       `Caches: ${openedCacheCount()} / ${treasures.length} | Bosses: ${Object.values(bossStates).filter(Boolean).length} / ${Object.keys(bossStates).length} | Keys: ${player.keyItems.size}`,
+      `Heavenly tier: ${endgameSystem?.serialize().bestTier || 0} | Marks: ${endgameSystem?.serialize().heavenlyMarks || 0} | Active: ${endgameSystem?.active()?.tier || 'none'}`,
       `Dash cooldown: ${dashCooldownDuration().toFixed(3)}s | Invulnerable: ${dev.invulnerable} | No cooldowns: ${dev.noCooldowns}`
     ].join('\n');
   }
@@ -1829,6 +2035,11 @@
       case 'sanctuary-tutors':
         if (currentScene === 'world') worldReturnPosition = { x: player.x, y: player.y };
         currentScene = 'sanctuary'; mapOpen = false; player.x = 24.5 * SANCT_TILE; player.y = 27 * SANCT_TILE; player.facing = 0; break;
+      case 'unlock-endgame':
+        for (const boss of bossDefs) { bossStates[boss.id] = true; player.keyItems.add(boss.keyItem); const enemy = enemies.find(e => e.bossId === boss.id); if (enemy) enemy.alive = false; }
+        player.realm = 4; player.stage = 1; player.maxQi = qiCapacity(); player.qi = player.maxQi; player.hp = effectiveMaxHp(); break;
+      case 'start-tribulation': startTribulation(); persist = false; break;
+      case 'complete-tribulation': completeTribulation(); persist = false; break;
       case 'clear-materials':
         player.herbs = player.stones = 0; for (const item of Object.keys(player.ingredients)) player.ingredients[item] = 0;
         player.keyItems = new Set(bossDefs.filter(b => bossStates[b.id]).map(b => b.keyItem)); reconcile = false; break;
@@ -2024,9 +2235,11 @@
   addEventListener('beforeunload', () => { if (!suppressSave) save(); });
 
   configureSkillSystem();
+  configureEndgameSystem();
   const hadSave = load();
   if (!hadSave) player.hp = effectiveMaxHp();
   populate();
+  resumeTribulation();
   const questRepaired = reconcileQuestProgress();
   if (hadSave && (loadedSaveVersion < SAVE_VERSION || questRepaired)) save();
   configureNameSetup(); updateUI(); requestAnimationFrame(frame);

@@ -264,6 +264,7 @@
     .inventory-layout { display: grid; grid-template-columns: minmax(190px, .65fr) minmax(360px, 1.35fr); gap: 18px; }
     .equipment-slots { display: grid; gap: 8px; }
     .equipment-slot { min-height: 58px !important; text-align: left; touch-action: manipulation; }
+    .equipment-slot.selected { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
     .equipment-slot strong, .bag-slot strong { display: block; color: #fff0bd; }
     .equipment-slot small, .bag-slot small { display: block; margin-top: 2px; color: #8fa09a; }
     .inventory-stats { margin-top: 10px; padding: 9px; border: 1px solid #40544d; background: #09110f; color: #b8ead4; white-space: pre-wrap; }
@@ -285,6 +286,10 @@
       appearance: none;
     }
     .bag-slot.empty { background: #0b1119; border-color: #29353e; }
+    .bag-slot strong { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-height: 1.15; }
+    .bag-slot[data-slot="weapon"] { background: linear-gradient(145deg, #1a2028, #10151c); }
+    .bag-slot[data-slot="armor"] { background: linear-gradient(145deg, #17231f, #0d1613); }
+    .bag-slot[data-slot="pendant"] { background: linear-gradient(145deg, #241e2a, #16121b); }
     .bag-slot.selected { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
     .bag-slot[data-rarity="rare"] { border-color: #729ee0; }
     .bag-slot[data-rarity="epic"] { border-color: #b17fe1; }
@@ -318,8 +323,8 @@
       .dev-group.wide { grid-column: auto; }
       .inventory-layout { grid-template-columns: 1fr; }
       .storage-layout { grid-template-columns: 1fr; }
-      .bag-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-      .bag-slot { min-height: 52px !important; padding: 4px !important; font-size: .64rem; }
+      .bag-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .bag-slot { min-height: 64px !important; padding: 6px !important; font-size: .68rem; }
       .shop-grid { grid-template-columns: 1fr; }
     }
     @media (hover: none) {
@@ -329,6 +334,7 @@
       }
       .bag-slot.selected:hover { color: #fff2c7; }
     }
+    @media (max-width: 460px) { .bag-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
     @media (max-height: 540px) { #quest { display: none; } .topbar { top: 6px; } }
   </style>
 </head>
@@ -437,6 +443,8 @@
             <button data-dev-action="learn-all-skills">Learn all arts</button><button data-dev-action="enter-sanctuary">Enter sanctuary</button>
             <button data-dev-action="sanctuary-corner">Sanctuary chest</button><button data-dev-action="sanctuary-well">Sanctuary well</button>
             <button data-dev-action="sanctuary-tutors">Sanctuary tutors</button>
+            <button data-dev-action="unlock-endgame">Unlock Nascent endgame</button><button data-dev-action="start-tribulation">Start next tribulation</button>
+            <button data-dev-action="complete-tribulation">Complete active tribulation</button>
             <button data-dev-action="open-caches">Open all caches</button>
             <button data-dev-action="reset-caches">Reset caches</button><button data-dev-action="defeat-boss">Defeat boss</button>
             <button data-dev-action="respawn-boss">Respawn boss</button><button data-dev-action="trigger-attack">Trigger nearby attack</button>
@@ -488,6 +496,7 @@
   <script src="systems/storage.js?v=1"></script>
   <script src="systems/sanctuary.js?v=1"></script>
   <script src="systems/skills.js?v=1"></script>
-  <script src="game.js?v=13"></script>
+  <script src="systems/endgame.js?v=1"></script>
+  <script src="game.js?v=14"></script>
 </body>
 </html>

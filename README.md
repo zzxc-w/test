@@ -21,11 +21,15 @@ Keyboard controls can be remapped from **Menu → Keybinds**. Touch controls sta
 
 Developer test chamber: press **Ctrl + Shift + Alt + D** on a hardware keyboard, or press and hold **Menu** for about two seconds on touch devices.
 
-After the short combat/cultivation tutorial, exploration is self-directed. Regional materials and unique boss drops unlock later cultivation stages. The large Verdant Star Sanctuary beside the Crossroads is an enterable home base with eight named residents, tutors, a blacksmith, crafting placeholders, a training floor, and a decorated great hall. Its private cultivator corner contains a full-heal Moonwater Well, a rest bed, meditation seat, and an infinite personal equipment chest. Quartermaster Lian now works inside the sanctuary and sells weapons, armor, and pendants for sword, spear, dual-blade, and greatsword builds.
+After the short combat/cultivation tutorial, exploration is self-directed. Regional materials and unique boss drops unlock later cultivation stages. The Verdant Star Sanctuary beside the Crossroads is an enterable, densely furnished home base with twelve named residents, tutors, a blacksmith, crafting placeholders, a training floor, archive, forge, personal quarters, and decorated great hall. Its private cultivator corner contains a full-heal Moonwater Well, a rest bed, meditation seat, and an infinite personal equipment chest. Quartermaster Lian works inside the sanctuary and sells weapons, armor, and pendants for sword, spear, dual-blade, and greatsword builds.
 
 Every item occupies one backpack slot; select one to equip, unequip, drop, or store it. Matching two pieces awakens a build bonus. Tutors teach persistent active and passive arts in exchange for resources when their requirements are met. Solo-world equipment and arts do not alter normalized arena balance.
 
 Progress, equipment, personal-chest contents, learned arts, and keybindings are saved in the browser automatically. A cultivator name is chosen once when beginning an unnamed save and remains bound to that journey; clearing progress returns to name creation.
+
+## Heavenly Tribulations
+
+After defeating all five world bosses and reaching Nascent Soul, speak with Formation Scholar Bo in the sanctuary archive. He opens the Heavenly Scar at Starfall Crater: a repeatable sequence of increasingly dangerous enemy waves followed by an echo boss. Tiers unlock in order, cleared tiers can be replayed, and victories grant persistent Heavenly Marks and Insight. Milestone tiers advance Nascent Soul from stage I through IX; Insight also provides capped solo-world health and damage growth. Leaving the crater or dying fails the active attempt, while refreshing safely reforms its first wave.
 
 ## Multiplayer
 
