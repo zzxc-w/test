@@ -2261,7 +2261,7 @@
     const mw = mapOpen ? 520 : 176, mh = mapOpen ? 390 : 132, x0 = mapOpen ? (W - mw) / 2 : W - mw - 14, y0 = mapOpen ? (H - mh) / 2 : H - mh - 15;
     ctx.fillStyle = mapOpen ? '#08061af2' : '#090819e8'; ctx.fillRect(x0 - 7, mapOpen ? y0 - 32 : y0 - 25, mw + 14, mh + (mapOpen ? 39 : 32));
     ctx.strokeStyle = '#b9a3f2aa'; ctx.strokeRect(x0 - 7.5, mapOpen ? y0 - 32.5 : y0 - 25.5, mw + 15, mh + (mapOpen ? 40 : 33));
-    ctx.fillStyle = '#e8d9ff'; ctx.font = 'bold 12px Georgia'; ctx.textAlign = mapOpen ? 'center' : 'left'; ctx.fillText(mapOpen ? 'IMMORTAL REALM · M / Map to close' : 'IMMORTAL REALM · M / Map', mapOpen ? x0 + mw / 2 : x0, y0 - 9);
+    ctx.fillStyle = '#e8d9ff'; ctx.font = 'bold 12px Georgia'; ctx.textAlign = mapOpen ? 'center' : 'left'; ctx.fillText(mapOpen ? 'IMMORTAL REALM · M / Map to close' : 'IMMORTAL REALM · M', mapOpen ? x0 + mw / 2 : x0, y0 - 9);
     for (const area of ascendedAreas) {
       ctx.fillStyle = area.color; ctx.beginPath(); ctx.ellipse(x0 + area.x / ASCENDED_W * mw, y0 + area.y / ASCENDED_H * mh, area.rx / ASCENDED_W * mw, area.ry / ASCENDED_H * mh, 0, 0, TAU); ctx.fill();
       if (mapOpen && immortalRealmSystem.discovered.includes(area.id)) { ctx.fillStyle = '#fff0c8'; ctx.font = '12px Georgia'; ctx.textAlign = 'center'; ctx.fillText(area.name, x0 + area.x / ASCENDED_W * mw, y0 + area.y / ASCENDED_H * mh); }
