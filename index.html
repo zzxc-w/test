@@ -310,6 +310,18 @@
     .shop-item { text-align: left; }
     .shop-item strong, .shop-item small { display: block; }
     .shop-item small { color: #92a29c; margin-top: 3px; }
+    .legacy-card { width: min(860px, 96vw); }
+    .legacy-summary { margin-bottom: 12px; }
+    .dao-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .dao-card { min-width: 0; padding: 11px; border: 1px solid #4b526b; background: #0d1420; }
+    .dao-card.attuned { border-color: #e4c978; box-shadow: inset 0 0 0 1px #e4c97855; }
+    .dao-card h3 { margin-top: 0; color: #ead99f; }
+    .dao-card > p { min-height: 42px; margin: 5px 0 10px; font-size: .78rem; }
+    .dao-node { width: 100%; margin-top: 6px; text-align: left; touch-action: manipulation; }
+    .dao-node strong, .dao-node small { display: block; }
+    .dao-node small { margin-top: 3px; color: #93a6ad; }
+    .dao-node.unlocked { border-color: #68d1a5; color: #caffea; background: #183329; }
+    .dao-attune { width: 100%; margin-top: 9px; }
     @media (pointer: coarse), (max-width: 720px) {
       #touch { display: flex; }
       .bottom-help { display: none; }
@@ -326,6 +338,8 @@
       .bag-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
       .bag-slot { min-height: 64px !important; padding: 6px !important; font-size: .68rem; }
       .shop-grid { grid-template-columns: 1fr; }
+      .dao-grid { grid-template-columns: 1fr; }
+      .dao-card > p { min-height: 0; }
     }
     @media (hover: none) {
       #settingsButton:hover, #multiplayerButton:hover, .menu-card button:hover {
@@ -424,6 +438,14 @@
         <div class="menu-actions"><button id="depositItem" type="button" disabled>Store item</button><button id="withdrawItem" type="button" disabled>Take item</button></div>
       </div>
     </section>
+    <section id="legacyMenu" class="modal" role="dialog" aria-modal="true" aria-labelledby="legacyTitle" hidden>
+      <div class="menu-card legacy-card">
+        <div class="menu-head"><h2 id="legacyTitle">Celestial Legacy</h2><button id="closeLegacy" type="button">Close</button></div>
+        <pre id="legacySummary" class="dev-status legacy-summary"></pre>
+        <p>Unlock constellation nodes with Soul Shards and Ascendant Sigils. Only one path may be attuned at a time; attunement can be changed safely in the sanctuary.</p>
+        <div id="daoGrid" class="dao-grid"></div>
+      </div>
+    </section>
     <section id="devMenu" class="modal" role="dialog" aria-modal="true" aria-labelledby="devTitle" hidden>
       <div class="menu-card">
         <div class="menu-head"><h2 id="devTitle">Cultivator Test Chamber</h2><button id="closeDev" type="button">Close</button></div>
@@ -447,6 +469,8 @@
             <button data-dev-action="complete-tribulation">Complete active tribulation</button>
             <button data-dev-action="complete-all-tribulations">Clear all 3 tribulations</button><button data-dev-action="ascend-higher-realm">Ascend to higher realm</button>
             <button data-dev-action="enter-higher-realm">Enter higher realm</button><button data-dev-action="start-rift">Start nearby sky rift</button>
+            <button data-dev-action="grant-immortal-resources">+150 shards / +12 sigils</button><button data-dev-action="open-dao-paths">Open Dao constellations</button>
+            <button data-dev-action="start-incursion">Start celestial incursion</button>
             <button data-dev-action="open-caches">Open all caches</button>
             <button data-dev-action="reset-caches">Reset caches</button><button data-dev-action="defeat-boss">Defeat boss</button>
             <button data-dev-action="respawn-boss">Respawn boss</button><button data-dev-action="trigger-attack">Trigger nearby attack</button>
@@ -500,6 +524,8 @@
   <script src="systems/skills.js?v=1"></script>
   <script src="systems/endgame.js?v=1"></script>
   <script src="systems/immortal-realm.js?v=1"></script>
-  <script src="game.js?v=15"></script>
+  <script src="systems/dao-paths.js?v=1"></script>
+  <script src="systems/celestial-events.js?v=1"></script>
+  <script src="game.js?v=16"></script>
 </body>
 </html>
